@@ -28,6 +28,7 @@ Options
   --strict                            Count low-confidence findings for --fail-on
                                       (examples, docs, tests) as well
   --info                              Include info-level findings
+  --worktrees                         Also scan linked git worktrees (skipped by default)
   --verbose                           Show everything in the terminal report
   --no-color                          Disable colours (also respects NO_COLOR)
   -v, --version                       Print the version
@@ -59,6 +60,7 @@ function main(argv: string[]): number {
         threshold: { type: 'string', default: '0.5' },
         'max-file-size': { type: 'string', default: '512' },
         info: { type: 'boolean', default: false },
+        worktrees: { type: 'boolean', default: false },
         strict: { type: 'boolean', default: false },
         verbose: { type: 'boolean', default: false },
         'no-color': { type: 'boolean', default: false },
@@ -93,7 +95,7 @@ function main(argv: string[]): number {
 
   let result;
   try {
-    result = scan({ paths: paths.length ? paths : ['.'], maxFileBytes: maxKb * 1024, includeInfo: o.info as boolean, similarityThreshold: threshold });
+    result = scan({ paths: paths.length ? paths : ['.'], maxFileBytes: maxKb * 1024, includeInfo: o.info as boolean, similarityThreshold: threshold, worktrees: o.worktrees as boolean });
   } catch (err) {
     fail((err as Error).message);
   }

@@ -90,6 +90,7 @@ export interface ScanResult {
     duplicateArtifacts: number;
     totalTokens: number;
     filesScanned: number;
+    worktreesSkipped: number;
     durationMs: number;
   };
 }
@@ -99,6 +100,7 @@ export interface ScanOptions {
   maxFileBytes: number;
   includeInfo: boolean;
   similarityThreshold: number;
+  worktrees?: boolean;
 }
 
 export type Confidence = 'high' | 'low';

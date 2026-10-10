@@ -9,7 +9,7 @@ const CONTENT_CATEGORIES = new Set(['project-instructions', 'agent-settings', 'm
 
 export function scan(opts: ScanOptions): ScanResult {
   const started = Date.now();
-  const { candidates, filesScanned, repos } = discover(opts.paths);
+  const { candidates, filesScanned, repos, worktreesSkipped } = discover(opts.paths, { worktrees: opts.worktrees });
 
   const artifacts = candidates
     .map((c) => parseCandidate(c, opts.maxFileBytes))
@@ -56,6 +56,7 @@ export function scan(opts: ScanOptions): ScanResult {
       duplicateArtifacts: clusters.reduce((n, c) => n + c.members.length, 0),
       totalTokens: artifacts.reduce((n, a) => n + a.tokens, 0),
       filesScanned,
+      worktreesSkipped: worktreesSkipped.length,
       durationMs: Date.now() - started,
     },
   };

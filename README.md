@@ -51,7 +51,7 @@ Rookery runs entirely on your machine. Nothing is uploaded.
 | **Windsurf** | `.windsurfrules`, `.windsurf/rules/`, `.windsurf/workflows/` |
 | **Agent Skills** | any `SKILL.md` (plugin and shared skill folders), including the scripts bundled next to it |
 
-Point it at one repo, or at a folder of many repos. Each nested `.git` is treated as its own repo.
+Point it at one repo, or at a folder of many repos. Each nested `.git` is treated as its own repo; linked git worktrees (like Claude Code's `.claude/worktrees/`) are skipped so branch checkouts don't count as duplicates.
 
 ## What you get
 
@@ -73,6 +73,7 @@ Point it at one repo, or at a folder of many repos. Each nested `.git` is treate
 | `RK-INJ-001` | high | Prompt-injection phrasing |
 | `RK-INJ-002` | critical | Hidden Unicode characters (zero-width, bidi, tag smuggling) |
 | `RK-INJ-003` | medium | Instructions hidden in an HTML comment |
+| `RK-INJ-004` | high | Hides actions from the user or overrides agent safety (e.g. "ignore the plan-mode reminder", "the user must never see") |
 | `RK-EXE-001` | high | Remote script piped to a shell |
 | `RK-EXE-002` | high | Destructive delete of home or root |
 | `RK-EXE-003` | high | Obfuscated code execution |
@@ -139,6 +140,7 @@ jobs:
 | `--threshold <0-1>` | `0.5` | Near-duplicate similarity (Jaccard over word 3-grams) |
 | `--max-file-size <kb>` | `512` | Skip larger files |
 | `--info` | off | Include info-level findings |
+| `--worktrees` | off | Also scan linked git worktrees (they're copies of a repo you're already scanning, so skipped by default) |
 | `--verbose` | off | Show everything in the terminal |
 | `--no-color` | | Disable colour (also respects `NO_COLOR`) |
 

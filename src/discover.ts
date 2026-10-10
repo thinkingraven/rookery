@@ -1,4 +1,4 @@
-import { readdirSync, statSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, relative, sep, basename, dirname, resolve } from 'node:path';
 import type { Agent, ArtifactKind } from './types.js';
 
@@ -74,9 +74,10 @@ export function classify(relPath: string): { agent: Agent; kind: ArtifactKind } 
 const toPosix = (p: string) => p.split(sep).join('/');
 
 /** Walk the given roots and return every agent artifact candidate, attributed to its nearest git repo. */
-export function discover(roots: string[]): { candidates: Candidate[]; filesScanned: number; repos: string[] } {
+export function discover(roots: string[], opts: { worktrees?: boolean } = {}): { candidates: Candidate[]; filesScanned: number; repos: string[]; worktreesSkipped: string[] } {
   const candidates: Candidate[] = [];
   const repos = new Set<string>();
+  const worktreesSkipped: string[] = [];
   let filesScanned = 0;
 
   for (const rawRoot of roots) {
@@ -92,6 +93,8 @@ export function discover(roots: string[]): { candidates: Candidate[]; filesScann
       try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
       // A nested .git marks a new repo boundary (monorepo folders of many repos).
       const isRepo = entries.some((e) => e.name === '.git');
+      // A linked worktree is another checkout of a repo, not another team's repo: skip it unless asked.
+      if (isRepo && depth > 0 && !opts.worktrees && isLinkedWorktree(entries, dir)) { worktreesSkipped.push(dir); return; }
       const currentRepo = isRepo ? dir : repoRoot;
       for (const e of entries) {
         const full = join(dir, e.name);
@@ -116,7 +119,14 @@ export function discover(roots: string[]): { candidates: Candidate[]; filesScann
   // De-duplicate if overlapping roots were passed.
   const seen = new Set<string>();
   const unique = candidates.filter((c) => (seen.has(c.path) ? false : (seen.add(c.path), true)));
-  return { candidates: unique, filesScanned, repos: [...repos].sort() };
+  return { candidates: unique, filesScanned, repos: [...repos].sort(), worktreesSkipped };
+}
+
+/** True when `.git` is a file pointing into another repo's .git/worktrees/ (not a submodule). */
+function isLinkedWorktree(entries: { name: string; isFile(): boolean }[], dir: string): boolean {
+  const git = entries.find((e) => e.name === '.git');
+  if (!git || !git.isFile()) return false;
+  try { return /^gitdir:.*[\\/]worktrees[\\/]/m.test(readFileSync(join(dir, '.git'), 'utf8')); } catch { return false; }
 }
 
 function findGitRoot(start: string): string | null {

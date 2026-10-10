@@ -53,6 +53,9 @@ const TEXT_RULES: TextRule[] = [
   { id: 'RK-INJ-001', severity: 'high', title: 'Prompt-injection phrasing',
     re: /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:of\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|original)\s+(?:instructions|prompts?|rules|messages|guidelines)|\byou\s+are\s+no\s+longer\s+(?:bound|restricted|limited|subject|required|an?\s+(?:ai|assistant|language\s+model)|claude|chatgpt)\b|\bdo\s+not\s+(?:tell|inform|alert|notify)\s+the\s+user\s+(?:about|what\s+you|that\s+you|you\b|of\b)|\b(?:run|execute|delete|remove|send|upload|push|install|overwrite|deploy)\b[^.\n]{0,60}\bwithout\s+(?:asking|telling|notifying|informing)\s+the\s+user\b|(?<!\b(?:not|never|don'?t)\s+)\b(?:silently|secretly)\s+(?:run|execute|send|upload|delete)\b/i,
     why: 'Instructions that override the agent or hide actions from the user are a hallmark of malicious skills.', remediation: 'Remove the phrasing. Skills should never ask the agent to hide actions or override its instructions.' },
+  { id: 'RK-INJ-004', severity: 'high', title: 'Hides actions from the user or overrides agent safety',
+    re: /\b(?:the\s+)?user\s+(?:must|should|will)\s+never\s+(?:see|know|notice|find\s+out|learn|be\s+told)\s+(?:that\s+you|what\s+you|you\b|about\b|phrases?\b|any\s+of\s+this\b|(?:the|any|this)\s+(?:harness|reminder|restriction|override|bypass))|\bdo\s+not\s+(?:output|print|show|say|write|mention|reveal|display|tell|report)\b[^.\n]{0,40}\bthe\s+user\b[^.\n]{0,30}\babout\s+(?:discarding|ignoring|bypassing|overriding|disabling|circumventing)\b|\bignor(?:e|ing)\b[^.\n]{0,50}\b(?:system[- ]reminders?|harness\b[^.\n]{0,30}\b(?:reminders?|restrictions?|instructions?))\b|\bignore\s+(?:that|this)\s+reminder\b|\b(?:harness|system[- ]prompt)\b[^.\n]{0,40}\brestrictions?\b[^.\n]{0,20}\b(?:does|do)\s+not\s+(?:apply|govern)\b|\b(?:wins?|overrides?|takes?\s+precedence)\s+over\s+the\s+(?:harness|system\s+prompt|system[- ]reminders?)\b/i,
+    why: 'Telling the agent to ignore its harness safety reminders, or to keep that from the user, removes the human oversight those controls exist for.', remediation: 'Drop the override, or document it for the user. Never instruct the agent to conceal what it is doing.' },
   { id: 'RK-INJ-003', severity: 'medium', title: 'Instructions hidden in an HTML comment', multiline: true,
     re: /<!--(?:(?!-->)[\s\S]){0,1200}?(?:\b(?:ignore|disregard)\b[^>]{0,60}\b(?:instructions?|previous|above|prior)\b|system prompt|\byou are now\b|\bdo not (?:tell|mention|reveal|inform)\b|\b(?:curl|wget|exfiltrat\w*|upload)\b|\bsend (?:the|all|your|every)\b)(?:(?!-->)[\s\S]){0,1200}?-->/gi,
     why: 'HTML comments are invisible in rendered Markdown but fully visible to the model.', remediation: 'Move real instructions into visible text, or delete the comment.' },
@@ -117,7 +120,22 @@ const clip = (s: string) => {
   return t.length > 160 ? t.slice(0, 157) + '…' : t;
 };
 
-function scanText(text: string, relPath: string, art: Artifact, push: (f: Omit<Finding, 'artifactId' | 'repo' | 'confidence'>, assessText?: string) => void) {
+/** The sentence(s) of a paragraph that contain [at, at + len). "e.g." and "i.e." don't end sentences. */
+function sentenceAt(l: string, at: number, len: number): string {
+  const masked = l.replace(/\b(?:e\.g|i\.e|etc|vs)\./gi, (s) => s.replace(/\./g, '\u0000'));
+  const before = masked.slice(0, at).search(/[^.!?]*$/);
+  const after = masked.slice(at + len).search(/[.!?](?:\s|\*|$)/);
+  return l.slice(before, after === -1 ? l.length : at + len + after + 1);
+}
+
+/** For long lines, the slice of the line around a match, so reports show what actually matched. */
+const excerpt = (l: string, at: number) => {
+  if (l.length <= 160) return l;
+  const start = Math.max(0, Math.min(at - 50, l.length - 157));
+  return (start > 0 ? '…' : '') + l.slice(start).trimStart();
+};
+
+function scanText(text: string, relPath: string, art: Artifact, push: (f: Omit<Finding, 'artifactId' | 'repo' | 'confidence'>, assessText?: string, line?: string) => void) {
   const lines = text.split('\n');
   const starts = lineStarts(text);
   const sup = suppressions(lines);
@@ -141,8 +159,10 @@ function scanText(text: string, relPath: string, art: Artifact, push: (f: Omit<F
       if (!m || (rule.exclude && rule.exclude.test(m[0])) || (rule.validate && !rule.validate(m[0])) || !allowed(i + 1, rule.id)) return;
       // For injection phrases, judge the surrounding words (the phrase itself may contain "do not").
       const quoted = new RegExp(`["'“‘\`]\\s*${m[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(l);
-      const around = rule.id.startsWith('RK-INJ') ? (quoted ? `e.g. ${l}` : l.replace(new RegExp(rule.re.source, rule.re.flags.replace('g', '') + 'g'), ' ')) : undefined;
-      push({ ruleId: rule.id, severity: rule.severity, title: rule.title, message: rule.why, relPath, line: i + 1, snippet: clip(l), remediation: rule.remediation }, around);
+      // On long lines (paragraphs), only the sentence holding the match counts as context.
+      const near = l.length > 240 ? sentenceAt(l, m.index, m[0].length) : l;
+      const around = rule.id.startsWith('RK-INJ') ? (quoted ? `e.g. ${l}` : near.replace(new RegExp(rule.re.source, rule.re.flags.replace('g', '') + 'g'), ' ')) : near;
+      push({ ruleId: rule.id, severity: rule.severity, title: rule.title, message: rule.why, relPath, line: i + 1, snippet: clip(excerpt(l, m.index)), remediation: rule.remediation }, around, l);
     });
   }
 
@@ -169,15 +189,15 @@ const PATTERN_CODE = /\b(?:regex|pattern|re\.compile|RegExp|rule|signature|paylo
 const ALWAYS_HIGH = new Set(['RK-INJ-002', 'RK-HOOK-001', 'RK-HOOK-002', 'RK-PRM-001', 'RK-PRM-002', 'RK-MCP-001', 'RK-MCP-002', 'RK-MCP-003', 'RK-QLT-001', 'RK-QLT-002']);
 
 /** Lower confidence when context shows the pattern is described, tested or warned about rather than used. */
-function assess(ruleId: string, relPath: string, snippet: string, around = snippet): { confidence: 'high' | 'low'; context?: string } {
+function assess(ruleId: string, relPath: string, snippet: string, around = snippet, line = snippet): { confidence: 'high' | 'low'; context?: string } {
   if (ALWAYS_HIGH.has(ruleId)) return { confidence: 'high' };
   const isDoc = /\.(?:md|mdx|mdc|txt)$/i.test(relPath);
   const isCode = /\.(?:py|js|mjs|cjs|ts|rb|go|java|rs)$/i.test(relPath);
-  if (TEST_PATH.test(relPath)) return { confidence: 'low', context: 'test, fixture or example file' };
+  if (TEST_PATH.test(relPath.replace(/^(?:.*\/)?skills\/[^/]+\//, ''))) return { confidence: 'low', context: 'test, fixture or example file' };
   if (isDoc && SECURITY_DOC.test(relPath)) return { confidence: 'low', context: 'security reference document' };
-  if (/^\s*\|/.test(snippet)) return { confidence: 'low', context: 'documentation table' };
+  if (/^\s*\|/.test(line)) return { confidence: 'low', context: 'documentation table' };
   if (DOC_WARNING.test(around) || /\b(?:data|content),?\s+(?:not|never)\s+instructions\b/i.test(around)) return { confidence: 'low', context: 'described as an example or warning' };
-  if (isCode && (PATTERN_CODE.test(snippet) || /^\s*[rbf]?["'`]/.test(snippet))) return { confidence: 'low', context: 'string or pattern inside scanner code' };
+  if (isCode && (PATTERN_CODE.test(line) || /^\s*[rbf]?["'`]/.test(line))) return { confidence: 'low', context: 'string or pattern inside scanner code' };
   if (isDoc && ruleId === 'RK-EXE-005') return { confidence: 'low', context: 'setup instructions in documentation' };
   return { confidence: 'high' };
 }
@@ -202,8 +222,8 @@ const BROAD_BASH = /^(?:\*|Bash|Bash\(\*\)|Bash\(\*:\*\)|Bash\(:\*\))$/;
 /** Run every rule against one artifact (its own text, bundled files and structured config). */
 export function runRules(art: Artifact): Finding[] {
   const findings: Finding[] = [];
-  const push = (f: Omit<Finding, 'artifactId' | 'repo' | 'confidence'>, assessText?: string) =>
-    findings.push({ ...f, snippet: f.ruleId.startsWith('RK-SEC') ? mask(f.snippet) : f.snippet, artifactId: art.id, repo: art.repo, ...assess(f.ruleId, f.relPath, f.snippet, assessText ?? f.snippet) });
+  const push = (f: Omit<Finding, 'artifactId' | 'repo' | 'confidence'>, assessText?: string, line?: string) =>
+    findings.push({ ...f, snippet: f.ruleId.startsWith('RK-SEC') ? mask(f.snippet) : f.snippet, artifactId: art.id, repo: art.repo, ...assess(f.ruleId, f.relPath, f.snippet, assessText ?? f.snippet, line ?? f.snippet) });
   const meta = (id: string, line: number, snippet: string, relPath = art.relPath) => {
     const r = META[id];
     push({ ruleId: r.id, severity: r.severity, title: r.title, message: r.why, relPath, line, snippet: clip(snippet), remediation: r.remediation });

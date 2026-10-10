@@ -7,7 +7,7 @@ const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 export function renderMarkdown(r: ScanResult): string {
   const s = r.stats.findingsBySeverity;
   const lines: string[] = [];
-  lines.push(`# Rookery report`, '', `Scanned **${r.repos.length}** repo(s) · **${r.stats.artifacts}** agent artifacts · ${new Date(r.scannedAt).toUTCString()} · rookery v${r.tool.version}`, '');
+  lines.push(`# Rookery report`, '', `Scanned **${r.repos.length}** repo(s) · **${r.stats.artifacts}** agent artifacts · ${new Date(r.scannedAt).toUTCString()} ${r.stats.worktreesSkipped ? ` · ${r.stats.worktreesSkipped} git worktree(s) skipped` : ''} · rookery v${r.tool.version}`, '');
   lines.push(`| Critical | High | Medium | Low | Duplicate clusters |`, `|---|---|---|---|---|`, `| ${s.critical} | ${s.high} | ${s.medium} | ${s.low} | ${r.clusters.length} |`, '');
 
   if (r.categories.length) {
