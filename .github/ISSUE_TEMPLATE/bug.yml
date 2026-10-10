@@ -1,0 +1,31 @@
+name: Bug report
+description: rookery crashed, missed a file, or reported something wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, and what rookery did instead.
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: npx @thinkingraven/rookery scan . --html report.html
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Paste the relevant output. Remove anything private first.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: rookery, Node and OS versions
+      placeholder: rookery 0.1.0 · node 22.11 · macOS 15
+    validations:
+      required: true

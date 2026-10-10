@@ -30,7 +30,7 @@ Options
   --info                              Include info-level findings
   --worktrees                         Also scan linked git worktrees (skipped by default)
   --verbose                           Show everything in the terminal report
-  --no-color                          Disable colours (also respects NO_COLOR)
+  --no-color                          Disable colours (also respects NO_COLOR; FORCE_COLOR forces them)
   -v, --version                       Print the version
   -h, --help                          Show this help
 
@@ -107,7 +107,7 @@ function main(argv: string[]): number {
   if (format === 'json') process.stdout.write(renderJson(result));
   else if (format === 'markdown') process.stdout.write(renderMarkdown(result));
   else {
-    const color = !o['no-color'] && !process.env.NO_COLOR && process.stdout.isTTY === true;
+    const color = !o['no-color'] && !process.env.NO_COLOR && (Boolean(process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') || process.stdout.isTTY === true);
     process.stdout.write(renderTerminal(result, { color, verbose: o.verbose as boolean, htmlPath: o.html as string | undefined }));
   }
 

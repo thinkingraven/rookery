@@ -28,7 +28,8 @@ export function renderMarkdown(r: ScanResult): string {
     for (const f of r.findings) lines.push(`| ${f.severity} | ${f.confidence}${f.context ? ` (${esc(f.context)})` : ''} | ${f.ruleId} | ${esc(f.title)} | \`${f.repo}/${f.relPath}:${f.line}\` |`);
     lines.push('');
   }
-  lines.push('## Inventory', '', '| Repo | Path | Agent | Kind | Name | Tokens |', '|---|---|---|---|---|---|');
+  lines.push('<details><summary><b>Inventory</b> (' + r.artifacts.length + ' agent artifacts)</summary>', '', '| Repo | Path | Agent | Kind | Name | Tokens |', '|---|---|---|---|---|---|');
   for (const a of r.artifacts) lines.push(`| ${a.repo} | \`${a.relPath}\` | ${a.agent} | ${a.kind} | ${esc(a.name)} | ${a.tokens} |`);
+  lines.push('', '</details>');
   return lines.join('\n') + '\n';
 }

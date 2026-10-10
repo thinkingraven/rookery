@@ -1,0 +1,15 @@
+name: Feature or agent support
+description: Support a new agent's file layout, a new rule, or a new report.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What should rookery do?
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example files or paths
+      description: For a new agent, list where it keeps skills, rules, settings and MCP config, with a link to its docs.

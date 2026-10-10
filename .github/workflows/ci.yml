@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: docs/rules.md is up to date
+        if: matrix.node == 24
+        run: npm run docs --silent && git diff --exit-code docs/rules.md
+
+  self-scan:
+    name: rookery scans itself (via the action)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./
+        with:
+          fail-on: high
+          html: rookery-report.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rookery-report
+          path: rookery-report.html

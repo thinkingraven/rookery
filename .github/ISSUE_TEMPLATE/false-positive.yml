@@ -1,0 +1,30 @@
+name: False positive or missed finding
+description: A rule fired on something harmless, or stayed quiet on something risky.
+labels: [rules]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which way?
+      options:
+        - False positive (flagged something harmless)
+        - False negative (missed something risky)
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule ID
+      placeholder: RK-INJ-001
+  - type: textarea
+    id: sample
+    attributes:
+      label: The line or file
+      description: A minimal sample that reproduces it. Replace real secrets, hosts and names with placeholders.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it harmless (or risky)?

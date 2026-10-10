@@ -1,18 +1,25 @@
 {
   "name": "@thinkingraven/rookery",
   "version": "0.1.0",
-  "description": "Scan repos for AI agent skills, rules and workflows (Claude Code, Codex, Cursor, Copilot, Gemini): inventory, duplicates and security findings.",
+  "description": "Find every AI agent skill in your repos, spot the duplicates teams keep rebuilding, and catch the risky ones. Claude Code, Codex, Cursor, Copilot, Gemini, Windsurf and MCP.",
   "keywords": [
     "claude-code",
+    "claude",
     "codex",
     "cursor",
-    "copilot",
+    "github-copilot",
+    "gemini-cli",
+    "windsurf",
     "agent-skills",
-    "skill",
+    "skills",
     "mcp",
-    "security",
     "ai-agents",
-    "governance"
+    "prompt-injection",
+    "security",
+    "static-analysis",
+    "devsecops",
+    "governance",
+    "cli"
   ],
   "license": "MIT",
   "author": "Thinking Raven <hello@thinkingraven.com>",
@@ -27,13 +34,14 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18.17"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
     "scan": "node dist/src/cli.js scan",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test",
+    "docs": "npm run build && node scripts/gen-rules-doc.mjs"
   },
   "dependencies": {
     "yaml": "^2.5.0"
