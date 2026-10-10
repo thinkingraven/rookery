@@ -25,3 +25,7 @@ See the table in [CONTRIBUTING.md](CONTRIBUTING.md#where-things-live).
 ## Brand
 
 Copy, colours and type follow the Thinking Raven brand: https://thinkingraven.github.io/brand/ (DESIGN.md and AGENTS.md there). Write "rookery." in lowercase with an amber full stop in visuals and "rookery" in prose.
+
+## Public repository rules
+
+This repository is public. Follow the organisation rules in https://github.com/thinkingraven/.github/blob/main/PUBLIC-REPOS.md: no secrets, no employer or client material, no personal data, demo data only in screenshots and examples.
