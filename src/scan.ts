@@ -1,20 +1,23 @@
-import { discover, repoName } from './discover.js';
+import { discover, localRoots, repoName, type Root } from './discover.js';
+import { skillshareCopyName, skillshareFlatName } from './provenance.js';
 import { parseCandidate } from './parse.js';
 import { runRules } from './rules.js';
 import { findClusters } from './similarity.js';
-import { SEVERITIES, type ScanOptions, type ScanResult, type Severity } from './types.js';
+import { SEVERITIES, type Artifact, type ScanOptions, type ScanResult, type Severity } from './types.js';
 import { VERSION } from './version.js';
 
 const CONTENT_CATEGORIES = new Set(['project-instructions', 'agent-settings', 'mcp-servers', 'plugin-manifest']);
 
 export function scan(opts: ScanOptions): ScanResult {
   const started = Date.now();
-  const { candidates, filesScanned, repos, worktreesSkipped } = discover(opts.paths, { worktrees: opts.worktrees });
+  const roots: Root[] = [...opts.paths, ...(opts.local ? localRoots(opts.home) : [])];
+  const { candidates, filesScanned, repos, worktreesSkipped } = discover(roots, { worktrees: opts.worktrees });
 
-  const artifacts = candidates
+  const parsed = candidates
     .map((c) => parseCandidate(c, opts.maxFileBytes))
     .filter((a): a is NonNullable<typeof a> => a !== null)
     .sort((a, b) => a.repo.localeCompare(b.repo) || a.relPath.localeCompare(b.relPath));
+  const artifacts = mergeSyncedCopies(parsed);
 
   const severityRank = (s: Severity) => SEVERITIES.indexOf(s);
   const findings = artifacts
@@ -23,6 +26,15 @@ export function scan(opts: ScanOptions): ScanResult {
     .sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || a.repo.localeCompare(b.repo) || a.relPath.localeCompare(b.relPath) || a.line - b.line);
 
   const clusters = findClusters(artifacts, opts.similarityThreshold);
+  // Copies installed from the same source (e.g. by a skill manager) are synced, not reinvented.
+  const byId = new Map(artifacts.map((a) => [a.id, a]));
+  // An exact copy of an installed skill (no record of its own) counts as a copy of that install too.
+  for (const c of clusters) {
+    const provs = c.members.map((m) => byId.get(m.artifactId)?.provenance?.source);
+    const sources = new Set(provs.filter(Boolean));
+    const [only] = [...sources];
+    if (sources.size === 1 && (provs.every(Boolean) || c.exact)) c.syncedFrom = only;
+  }
 
   const catMap = new Map<string, { count: number; repos: Set<string> }>();
   for (const a of artifacts) {
@@ -57,7 +69,28 @@ export function scan(opts: ScanOptions): ScanResult {
       totalTokens: artifacts.reduce((n, a) => n + a.tokens, 0),
       filesScanned,
       worktreesSkipped: worktreesSkipped.length,
+      linkedArtifacts: artifacts.filter((a) => a.links.length).length,
+      managed: artifacts.reduce<Record<string, number>>((acc, a) => (a.provenance ? ((acc[a.provenance.manager] = (acc[a.provenance.manager] ?? 0) + 1), acc) : acc), {}),
+      modifiedSinceInstall: artifacts.filter((a) => a.provenance?.modified).length,
       durationMs: Date.now() - started,
     },
   };
+}
+
+/** Fold copies skillshare synced into tool folders (copy mode) into the source skill they came from. */
+function mergeSyncedCopies(artifacts: Artifact[]): Artifact[] {
+  const sources = new Map<string, Artifact>();
+  for (const a of artifacts) {
+    const flat = a.agent === 'skillshare' ? skillshareFlatName(a.realPath, a.kind) : null;
+    if (flat) sources.set(`${a.kind}:${flat}`, a);
+  }
+  return artifacts.filter((a) => {
+    if (a.agent === 'skillshare') return true;
+    const name = skillshareCopyName(a.path, a.kind);
+    if (!name) return true;
+    const source = sources.get(`${a.kind}:${name}`);
+    if (!source) { a.provenance ??= { manager: 'skillshare' }; return true; }
+    source.links.push({ repo: a.repo, relPath: a.relPath, agent: a.agent, via: 'copy' });
+    return false;
+  });
 }

@@ -1,15 +1,22 @@
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, relative, sep, basename, dirname, resolve } from 'node:path';
 import type { Agent, ArtifactKind } from './types.js';
 
 /** A file that looks like an agent artifact, before parsing. */
 export interface Candidate {
-  path: string;
+  path: string;     // where it was found (may run through a symlink)
+  realPath: string; // after resolving symlinks
   repoRoot: string;
-  relPath: string; // posix, relative to repoRoot
+  relPath: string;  // posix, relative to repoRoot
   agent: Agent;
   kind: ArtifactKind;
+  links: { repoRoot: string; relPath: string; agent: Agent }[]; // other symlinked locations of the same file
+  viaLink: boolean; // reached through a symlink (a file link or a linked folder above it)
 }
+
+/** A folder or file to scan; `repoRoot` pins attribution (used for the home directory with --local). */
+export type Root = string | { path: string; repoRoot: string };
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', '.next', '.nuxt', 'vendor', 'target', '__pycache__',
@@ -27,6 +34,19 @@ interface Rule {
 }
 
 const under = (rel: string, dir: string) => rel.startsWith(dir + '/') || rel.includes('/' + dir + '/');
+
+// skillshare layouts. Global: ~/.config/skillshare/{skills,agents,rules,commands,…}. Project: .skillshare/ or skillshare/.
+// The visible project folder `skillshare/` only counts at the repo root.
+const SS_PREFIX = String.raw`(?:(?:^|\/)\.skillshare|(?:^|\/)\.config\/skillshare|^skillshare)`;
+const SS_ROOT = new RegExp(`${SS_PREFIX}$`);
+const SS_SKILLS = new RegExp(`${SS_PREFIX}\\/skills\\/`);
+const SS_AGENTS = new RegExp(`${SS_PREFIX}\\/agents\\/[^/]+$`);
+const SS_EXTRAS = new RegExp(`${SS_PREFIX}\\/(?:extras\\/[^/]+|rules|commands|prompts|workflows)\\/(?:.+\\/)?[^/]+$`);
+/** skillshare's operational folders, never agent content. */
+const SS_SKIP = new Set(['trash', 'backups', 'logs']);
+/** Folder names where skill managers create symlinks; symlinked folders are only followed inside these. */
+const AGENT_SEGMENTS = new Set(['.claude', '.agents', '.codex', '.cursor', '.gemini', '.github', '.windsurf', '.skillshare', 'skillshare', 'skills', 'agents', 'commands', 'prompts', 'rules', 'extras', 'workflows']);
+const inAgentArea = (p: string) => p.split(/[\\/]/).some((s) => AGENT_SEGMENTS.has(s));
 
 /** Ordered: first match wins. */
 const RULES: Rule[] = [
@@ -61,65 +81,126 @@ const RULES: Rule[] = [
   { test: (_r, b) => b === '.windsurfrules', agent: 'windsurf', kind: 'rules' },
   { test: (r, b) => b.endsWith('.md') && under(r, '.windsurf/rules'), agent: 'windsurf', kind: 'rules' },
   { test: (r, b) => b.endsWith('.md') && under(r, '.windsurf/workflows'), agent: 'windsurf', kind: 'command' },
+  // Skills synced into other tools' folders (skillshare and npx skills targets)
+  { test: (r, b) => b === 'SKILL.md' && under(r, '.codex/skills'), agent: 'codex', kind: 'skill' },
+  { test: (r, b) => b === 'SKILL.md' && under(r, '.cursor/skills'), agent: 'cursor', kind: 'skill' },
+  { test: (r, b) => b === 'SKILL.md' && under(r, '.gemini/skills'), agent: 'gemini', kind: 'skill' },
+  // skillshare: ~/.config/skillshare/ (global) and .skillshare/ or skillshare/ (project)
+  { test: (r, b) => b === 'SKILL.md' && SS_SKILLS.test(r), agent: 'skillshare', kind: 'skill' },
+  { test: (r, b) => b.endsWith('.md') && SS_AGENTS.test(r), agent: 'skillshare', kind: 'subagent' },
+  { test: (r, b) => b.endsWith('.md') && SS_EXTRAS.test(r), agent: 'skillshare', kind: 'rules' },
+  { test: (r, b) => (b === 'config.yaml' || b === 'mcp.yaml') && SS_ROOT.test(dirname(r)), agent: 'skillshare', kind: 'settings' },
   // Generic Agent Skills (any SKILL.md not matched above, e.g. plugin or shared skill folders)
   { test: (_r, b) => b === 'SKILL.md', agent: 'agent-skills', kind: 'skill' },
 ];
 
 export function classify(relPath: string): { agent: Agent; kind: ArtifactKind } | null {
   const base = relPath.split('/').pop() ?? relPath;
-  for (const rule of RULES) if (rule.test(relPath, base)) return { agent: rule.agent, kind: rule.kind };
+  for (const rule of RULES) {
+    if (!rule.test(relPath, base)) continue;
+    if (rule.agent === 'skillshare' && rule.kind === 'rules' && /\.?skillshare\/(?:extras\/)?(?:commands|prompts|workflows)\//.test(relPath)) return { agent: 'skillshare', kind: 'command' };
+    if (rule.kind === 'settings' && base === 'mcp.yaml') return { agent: rule.agent, kind: 'mcp-config' };
+    return { agent: rule.agent, kind: rule.kind };
+  }
   return null;
+}
+
+/** User-level agent folders scanned by --local (only those that exist). */
+export function localRoots(home = homedir()): Root[] {
+  const xdg = process.env.XDG_CONFIG_HOME && home === homedir() ? process.env.XDG_CONFIG_HOME : join(home, '.config');
+  const paths = [
+    '.claude/skills', '.claude/commands', '.claude/agents', '.claude/settings.json', '.claude/CLAUDE.md',
+    '.agents/skills',
+    '.codex/skills', '.codex/prompts', '.codex/config.toml', '.codex/AGENTS.md',
+    '.cursor/skills', '.cursor/rules', '.cursor/commands', '.cursor/mcp.json',
+    '.gemini/skills', '.gemini/commands', '.gemini/settings.json', '.gemini/GEMINI.md',
+  ].map((p) => join(home, p));
+  paths.push(join(xdg, 'skillshare'));
+  return paths.filter((p) => existsSync(p)).map((p) => ({ path: p, repoRoot: p.startsWith(home + sep) ? home : dirname(p) }));
 }
 
 const toPosix = (p: string) => p.split(sep).join('/');
 
 /** Walk the given roots and return every agent artifact candidate, attributed to its nearest git repo. */
-export function discover(roots: string[], opts: { worktrees?: boolean } = {}): { candidates: Candidate[]; filesScanned: number; repos: string[]; worktreesSkipped: string[] } {
-  const candidates: Candidate[] = [];
+export function discover(roots: Root[], opts: { worktrees?: boolean } = {}): { candidates: Candidate[]; filesScanned: number; repos: string[]; worktreesSkipped: string[] } {
+  const found: Candidate[] = [];
   const repos = new Set<string>();
   const worktreesSkipped: string[] = [];
   let filesScanned = 0;
 
-  for (const rawRoot of roots) {
+  for (const spec of roots) {
+    const rawRoot = typeof spec === 'string' ? spec : spec.path;
     const root = resolve(rawRoot);
     if (!existsSync(root)) throw new Error(`Path not found: ${rawRoot}`);
     const rootIsFile = statSync(root).isFile();
     const walkRoot = rootIsFile ? dirname(root) : root;
-    const fallbackRepo = findGitRoot(walkRoot) ?? walkRoot;
+    const pinned = typeof spec === 'string' ? undefined : resolve(spec.repoRoot);
+    const fallbackRepo = pinned ?? findGitRoot(walkRoot) ?? walkRoot;
 
-    const visit = (dir: string, repoRoot: string, depth: number) => {
+    const addFile = (full: string, repoRoot: string, viaLink: boolean) => {
+      if (rootIsFile && full !== root) return;
+      filesScanned++;
+      const rel = toPosix(relative(repoRoot, full));
+      const hit = classify(rel);
+      if (!hit) return;
+      let realPath = full;
+      try { realPath = realpathSync(full); } catch { /* keep the logical path */ }
+      found.push({ path: full, realPath, repoRoot, relPath: rel, ...hit, links: [], viaLink });
+      repos.add(repoRoot);
+    };
+
+    // `ancestors` holds the real paths of the folders above this one, so a symlink back up the tree can't loop.
+    const visit = (dir: string, repoRoot: string, depth: number, ancestors: Set<string>, viaLink: boolean) => {
       if (depth > MAX_DEPTH) return;
+      let real = dir;
+      try { real = realpathSync(dir); } catch { return; }
+      if (ancestors.has(real)) return;
+      const chain = new Set(ancestors).add(real);
       let entries;
       try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-      // A nested .git marks a new repo boundary (monorepo folders of many repos).
-      const isRepo = entries.some((e) => e.name === '.git');
+      // A nested .git marks a new repo boundary, except inside a skillshare source (tracked skill repos belong to it).
+      const isRepo = !pinned && entries.some((e) => e.name === '.git') && !SS_SKILLS.test(toPosix(relative(repoRoot, dir)) + '/');
       // A linked worktree is another checkout of a repo, not another team's repo: skip it unless asked.
       if (isRepo && depth > 0 && !opts.worktrees && isLinkedWorktree(entries, dir)) { worktreesSkipped.push(dir); return; }
       const currentRepo = isRepo ? dir : repoRoot;
+      const inSkillshare = SS_ROOT.test(toPosix(relative(repoRoot, dir)));
       for (const e of entries) {
         const full = join(dir, e.name);
         if (e.isDirectory()) {
-          if (SKIP_DIRS.has(e.name)) continue;
-          visit(full, currentRepo, depth + 1);
+          if (SKIP_DIRS.has(e.name) || (inSkillshare && SS_SKIP.has(e.name))) continue;
+          visit(full, currentRepo, depth + 1, chain, viaLink);
         } else if (e.isFile()) {
-          if (rootIsFile && full !== root) continue;
-          filesScanned++;
-          const rel = toPosix(relative(currentRepo, full));
-          const hit = classify(rel);
-          if (hit) {
-            candidates.push({ path: full, repoRoot: currentRepo, relPath: rel, ...hit });
-            repos.add(currentRepo);
+          addFile(full, currentRepo, viaLink);
+        } else if (e.isSymbolicLink()) {
+          // Skill managers (skillshare, npx skills) install by symlink. Follow links inside agent folders
+          // when they point at agent content; ignore broken links.
+          let st;
+          try { st = statSync(full); } catch { continue; }
+          if (st.isFile()) addFile(full, currentRepo, true);
+          else if (st.isDirectory() && !SKIP_DIRS.has(e.name) && inAgentArea(dir)) {
+            let target = full;
+            try { target = realpathSync(full); } catch { continue; }
+            if (inAgentArea(target)) visit(full, currentRepo, depth + 1, chain, true);
           }
         }
       }
     };
-    visit(walkRoot, fallbackRepo, 0);
+    visit(walkRoot, fallbackRepo, 0, new Set(), false);
   }
 
-  // De-duplicate if overlapping roots were passed.
+  // De-duplicate overlapping roots, then fold symlinked copies of the same file into one candidate.
   const seen = new Set<string>();
-  const unique = candidates.filter((c) => (seen.has(c.path) ? false : (seen.add(c.path), true)));
-  return { candidates: unique, filesScanned, repos: [...repos].sort(), worktreesSkipped };
+  const unique = found.filter((c) => (seen.has(c.path) ? false : (seen.add(c.path), true)));
+  const byReal = new Map<string, Candidate[]>();
+  for (const c of unique) byReal.set(c.realPath, [...(byReal.get(c.realPath) ?? []), c]);
+  const candidates: Candidate[] = [];
+  for (const group of byReal.values()) {
+    // Prefer the real file itself, then a skillshare source, then the first location found.
+    const primary = group.find((c) => !c.viaLink) ?? group.find((c) => c.agent === 'skillshare') ?? group[0];
+    primary.links = group.filter((c) => c !== primary).map((c) => ({ repoRoot: c.repoRoot, relPath: c.relPath, agent: c.agent }));
+    candidates.push(primary);
+  }
+  return { candidates, filesScanned, repos: [...repos].sort(), worktreesSkipped };
 }
 
 /** True when `.git` is a file pointing into another repo's .git/worktrees/ (not a submodule). */
@@ -141,6 +222,7 @@ function findGitRoot(start: string): string | null {
 }
 
 export function repoName(repoRoot: string): string {
+  if (repoRoot === homedir()) return '~';
   return basename(repoRoot) || repoRoot;
 }
 

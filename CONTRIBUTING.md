@@ -18,9 +18,10 @@ Node 20 or newer.
 
 | Path | What it does |
 |---|---|
-| `src/discover.ts` | Walks folders, finds repo boundaries, classifies agent files by path (`RULES`, first match wins) |
+| `src/discover.ts` | Walks folders (following symlinks inside agent folders), finds repo boundaries, classifies agent files by path (`RULES`, first match wins), `--local` roots |
 | `src/parse.ts` | Frontmatter, settings JSON, Codex TOML, MCP servers, hooks, bundled scripts |
 | `src/rules.ts` | Security and quality rules, confidence scoring, suppressions, secret masking |
+| `src/provenance.ts` | Install records from skillshare and `npx skills`: source, commit, edits since install, synced copies |
 | `src/similarity.ts` | MinHash + LSH near-duplicate clustering |
 | `src/categories.ts` | Purpose taxonomy ("Code review", "Testing"…) |
 | `src/report/*` | Terminal, JSON, Markdown and HTML reports |

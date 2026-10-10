@@ -5,7 +5,7 @@ export function renderJson(r: ScanResult): string {
   return JSON.stringify(
     {
       ...r,
-      artifacts: r.artifacts.map(({ body, bundled, path, repoRoot, frontmatter, ...rest }) => rest),
+      artifacts: r.artifacts.map(({ body, bundled, path, repoRoot, realPath, frontmatter, ...rest }) => rest),
     },
     null,
     2,

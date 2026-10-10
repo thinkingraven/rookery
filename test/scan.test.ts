@@ -172,3 +172,104 @@ test('flags skills that hide actions from the user or override harness safety', 
   assert.ok(inj4.find((f) => f.line === 7)!.snippet.includes('Ignore any harness'), 'long lines show the matched part');
   rmSync(root, { recursive: true, force: true });
 });
+
+test('follows symlinked skills, records npx skills provenance, and --local scans the home folder', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const home = mkdtempSync(join(tmpdir(), 'rookery-home-'));
+  const w = (rel: string, content: string) => { mkdirSync(join(home, rel, '..'), { recursive: true }); writeFileSync(join(home, rel), content); };
+  w('.agents/skills/lint/SKILL.md', '---\nname: lint\ndescription: Run the linter and fix every warning before committing.\n---\n\nRun the linter.\n');
+  w('.agents/.skill-lock.json', JSON.stringify({ version: 3, skills: { lint: { source: 'acme/skills', sourceUrl: 'https://github.com/acme/skills.git', installedAt: '2026-06-01T00:00:00Z' } } }));
+  mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+  mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
+  symlinkSync('../../.agents/skills/lint', join(home, '.claude', 'skills', 'lint'));
+  symlinkSync('../../.agents/skills/lint', join(home, '.codex', 'skills', 'lint'));
+  symlinkSync('..', join(home, '.claude', 'skills', 'loop'));           // points back up the tree
+  symlinkSync('../nowhere', join(home, '.claude', 'skills', 'broken'));  // dangling
+  w('.claude/settings.json', JSON.stringify({ permissions: { allow: ['Read'] } }));
+
+  const r = scan({ paths: [], local: true, home, maxFileBytes: 512 * 1024, includeInfo: false, similarityThreshold: 0.5 });
+  const lint = r.artifacts.filter((a) => a.name === 'lint');
+  assert.equal(lint.length, 1, 'one skill, not three');
+  assert.equal(lint[0].relPath, '.agents/skills/lint/SKILL.md');
+  assert.deepEqual(lint[0].links.map((l) => [l.agent, l.via]).sort(), [['claude-code', 'symlink'], ['codex', 'symlink']]);
+  assert.equal(lint[0].provenance?.manager, 'skills-cli');
+  assert.equal(lint[0].provenance?.source, 'acme/skills');
+  assert.equal(r.clusters.length, 0);
+  assert.equal(r.stats.linkedArtifacts, 1);
+  assert.ok(r.artifacts.some((a) => a.kind === 'settings'), 'user settings are scanned too');
+
+  // Scanning only the tool folder still finds the linked skill.
+  const only = scan({ paths: [join(home, '.claude', 'skills')], maxFileBytes: 512 * 1024, includeInfo: false, similarityThreshold: 0.5 });
+  assert.equal(only.artifacts.filter((a) => a.name === 'lint').length, 1);
+  rmSync(home, { recursive: true, force: true });
+});
+
+test('understands skillshare projects: sources, tracked repos, copies, provenance and MCP config', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { createHash } = await import('node:crypto');
+  const root = mkdtempSync(join(tmpdir(), 'rookery-ss-'));
+  const p = join(root, 'proj');
+  const w = (rel: string, content: string) => { mkdirSync(join(p, rel, '..'), { recursive: true }); writeFileSync(join(p, rel), content); };
+  const skill = (name: string, desc: string) => `---\nname: ${name}\ndescription: ${desc}\n---\n\nInstructions for ${name}: read the input carefully, follow the house style and report what changed.\n`;
+  const sha = (s: string) => 'sha256:' + createHash('sha256').update(s).digest('hex');
+  mkdirSync(join(p, '.git'), { recursive: true });
+
+  const pdf = skill('pdf', 'Fill and extract PDF forms.');
+  const xlsx = skill('xlsx', 'Read and write spreadsheets.');
+  w('.skillshare/config.yaml', 'targets:\n  claude: {}\nmcp:\n  servers:\n    docs:\n      command: npx\n      args: ["-y", "@acme/docs-mcp"]\n');
+  w('.skillshare/skills/tools/pdf/SKILL.md', pdf + '\nLocal edit.\n');
+  w('.skillshare/skills/tools/xlsx/SKILL.md', xlsx);
+  w('.skillshare/skills/_team/.git/HEAD', 'ref: refs/heads/main\n');
+  w('.skillshare/skills/_team/frontend/ui/SKILL.md', skill('ui', 'Team UI conventions.'));
+  w('.skillshare/skills/mine/SKILL.md', skill('mine', 'A skill written here.'));
+  w('.skillshare/skills/.metadata.json', JSON.stringify({ version: 1, entries: {
+    'tools/pdf': { source: 'anthropics/skills/skills/pdf', repo_url: 'https://github.com/anthropics/skills.git', version: 'a1b2c3d4e5f6a7b8', file_hashes: { 'SKILL.md': sha(pdf) } },
+    'tools/xlsx': { source: 'anthropics/skills/skills/xlsx', version: '0f0f0f0f0f', file_hashes: { 'SKILL.md': sha(xlsx) } },
+    _team: { source: 'github.com/acme/team-skills', tracked: true },
+  } }));
+  w('.skillshare/agents/reviewer.md', '---\nname: reviewer\ndescription: Reviews pull requests.\n---\n\nReview the diff.\n');
+  w('.skillshare/extras/rules/coding.md', '# Coding\n\nUse strict TypeScript.\n');
+  w('.skillshare/extras/commands/deploy.md', 'Deploy to staging.\n');
+  w('.skillshare/trash/old_2026-01-01/SKILL.md', skill('old', 'Uninstalled.'));
+  mkdirSync(join(p, '.claude', 'skills'), { recursive: true });
+  symlinkSync('../../.skillshare/skills/tools/pdf', join(p, '.claude', 'skills', 'tools__pdf'));
+  symlinkSync('../../.skillshare/skills/_team/frontend/ui', join(p, '.claude', 'skills', '_team__frontend__ui'));
+  w('.cursor/skills/tools__xlsx/SKILL.md', xlsx);  // copy mode
+  w('.cursor/skills/.skillshare-manifest.json', JSON.stringify({ managed: { tools__xlsx: 'deadbeef' }, updated_at: '2026-10-01T00:00:00Z' }));
+
+  const r = scan({ paths: [root], maxFileBytes: 512 * 1024, includeInfo: false, similarityThreshold: 0.5 });
+  const by = (name: string) => r.artifacts.find((a) => a.name === name);
+  assert.deepEqual(r.repos, ['proj'], 'a tracked skill repo is part of the project, not a repo of its own');
+  assert.equal(by('pdf')?.agent, 'skillshare');
+  assert.deepEqual(by('pdf')?.links.map((l) => [l.agent, l.via]), [['claude-code', 'symlink']]);
+  assert.equal(by('pdf')?.provenance?.source, 'anthropics/skills/skills/pdf');
+  assert.equal(by('pdf')?.provenance?.commit, 'a1b2c3d');
+  assert.equal(by('pdf')?.provenance?.modified, true, 'edited since install');
+  assert.equal(by('xlsx')?.provenance?.modified, false);
+  assert.deepEqual(by('xlsx')?.links.map((l) => [l.agent, l.via]), [['cursor', 'copy']], 'copy-mode copy folds into its source');
+  assert.equal(by('ui')?.provenance?.tracked, true);
+  assert.equal(by('ui')?.provenance?.source, 'github.com/acme/team-skills');
+  assert.equal(by('mine')?.provenance?.source, undefined);
+  assert.equal(by('reviewer')?.kind, 'subagent');
+  assert.equal(r.artifacts.find((a) => a.relPath.endsWith('coding.md'))?.kind, 'rules');
+  assert.equal(r.artifacts.find((a) => a.relPath.endsWith('deploy.md'))?.kind, 'command');
+  assert.ok(!by('old'), 'skillshare trash is skipped');
+  assert.equal(r.clusters.length, 0, 'symlinks and synced copies are not duplicates');
+  assert.ok(r.findings.some((f) => f.ruleId === 'RK-MCP-001' && f.relPath === '.skillshare/config.yaml'), 'MCP servers in skillshare config are checked');
+  assert.equal(r.stats.modifiedSinceInstall, 1);
+  assert.equal(r.stats.managed.skillshare, 4);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('classifies skillshare and synced skill folders', () => {
+  assert.deepEqual(classify('.config/skillshare/skills/frontend/react/SKILL.md'), { agent: 'skillshare', kind: 'skill' });
+  assert.deepEqual(classify('.skillshare/agents/reviewer.md'), { agent: 'skillshare', kind: 'subagent' });
+  assert.deepEqual(classify('skillshare/extras/prompts/release.md'), { agent: 'skillshare', kind: 'command' });
+  assert.deepEqual(classify('.config/skillshare/rules/testing.md'), { agent: 'skillshare', kind: 'rules' });
+  assert.deepEqual(classify('.skillshare/mcp.yaml'), { agent: 'skillshare', kind: 'mcp-config' });
+  assert.deepEqual(classify('.codex/skills/pdf/SKILL.md'), { agent: 'codex', kind: 'skill' });
+  assert.deepEqual(classify('.cursor/skills/pdf/SKILL.md'), { agent: 'cursor', kind: 'skill' });
+  assert.equal(classify('docs/skillshare/config.yaml'), null);
+});

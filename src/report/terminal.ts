@@ -1,11 +1,9 @@
 import type { ScanResult, Severity } from '../types.js';
 import { CATEGORY_LABELS } from '../categories.js';
+import { AGENT_LABEL, MANAGER_LABEL, linkTargets, linkText, provenanceText, shortSource, sourceGroups } from './sources.js';
 
 export interface TerminalOptions { color: boolean; verbose: boolean; htmlPath?: string }
 
-const AGENT_LABEL: Record<string, string> = {
-  'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', copilot: 'Copilot', gemini: 'Gemini', windsurf: 'Windsurf', 'agent-skills': 'Agent Skills', mcp: 'MCP',
-};
 const KIND_LABEL: Record<string, string> = {
   skill: 'skills', command: 'commands', subagent: 'subagents', rules: 'rules files', settings: 'settings files', 'mcp-config': 'MCP configs', plugin: 'plugin manifests',
 };
@@ -18,7 +16,9 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
   const h = (title: string, meta = '') => out.push('', `${bold(title)}${meta ? '  ' + dim(meta) : ''}`);
   const n = (x: number) => x.toLocaleString('en-US');
 
-  out.push(`${bold('rookery')}${amber('.')} ${dim(`v${r.tool.version}`)}  ${dim('·')}  ${n(r.repos.length)} repo${r.repos.length === 1 ? '' : 's'}  ${dim('·')}  ${n(r.stats.filesScanned)} files  ${dim('·')}  ${(r.stats.durationMs / 1000).toFixed(1)}s${r.stats.worktreesSkipped ? dim(`  ·  ${r.stats.worktreesSkipped} git worktree${r.stats.worktreesSkipped === 1 ? '' : 's'} skipped (--worktrees to include)`) : ''}`);
+  const teamRepos = r.repos.filter((x) => x !== '~').length;
+  const scope = [teamRepos || !r.repos.includes('~') ? `${n(teamRepos)} repo${teamRepos === 1 ? '' : 's'}` : '', r.repos.includes('~') ? 'your home folder' : ''].filter(Boolean).join(' + ');
+  out.push(`${bold('rookery')}${amber('.')} ${dim(`v${r.tool.version}`)}  ${dim('·')}  ${scope}  ${dim('·')}  ${n(r.stats.filesScanned)} files  ${dim('·')}  ${(r.stats.durationMs / 1000).toFixed(1)}s${r.stats.worktreesSkipped ? dim(`  ·  ${r.stats.worktreesSkipped} git worktree${r.stats.worktreesSkipped === 1 ? '' : 's'} skipped (--worktrees to include)`) : ''}`);
 
   if (!r.artifacts.length) {
     out.push('', `No agent skills, rules or configs found. Rookery looks for ${dim('.claude/, AGENTS.md, .cursor/, .github/copilot-instructions.md, SKILL.md, .mcp.json')} and more.`);
@@ -40,9 +40,29 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
     }
   }
 
-  h('NEAR-DUPLICATES', r.clusters.length ? `${r.clusters.length} cluster${r.clusters.length === 1 ? '' : 's'} · ${r.stats.duplicateArtifacts} artifacts could be ${r.clusters.length}` : 'none found');
+  const sources = sourceGroups(r.artifacts);
+  const targets = linkTargets(r.artifacts);
+  if (sources.length || targets.length) {
+    const managed = Object.values(r.stats.managed).reduce((a, b) => a + b, 0);
+    h('WHERE SKILLS COME FROM', [managed && `${managed} installed by a skill manager`, r.stats.linkedArtifacts && `${r.stats.linkedArtifacts} linked into other tools`, r.stats.modifiedSinceInstall && `${r.stats.modifiedSinceInstall} edited since install`].filter(Boolean).join(' · '));
+    const width = Math.max(11, ...sources.map((g) => (MANAGER_LABEL[g.manager] ?? g.manager).length));
+    for (const manager of [...new Set(sources.map((g) => g.manager))]) {
+      const groups = sources.filter((g) => g.manager === manager);
+      const shown = groups.slice(0, o.verbose ? 50 : 5).map((g) => `${g.source} ${bold(g.count)}`).join(dim('  ·  '));
+      out.push(`  ${(MANAGER_LABEL[manager] ?? manager).padEnd(width)}  ${shown}${groups.length > 5 && !o.verbose ? dim(`  · ${groups.length - 5} more`) : ''}`);
+    }
+    if (targets.length) out.push(`  ${'Linked into'.padEnd(width)}  ${targets.map((t) => linkText(t)).join(dim('  ·  '))}`);
+    const edited = r.artifacts.filter((a) => a.provenance?.modified);
+    for (const a of edited.slice(0, o.verbose ? 100 : 5)) out.push(`  ${yellow('✎')} ${a.name} ${dim(`edited since install (${provenanceText(a.provenance!)})`)}`);
+    if (edited.length > 5 && !o.verbose) out.push(dim(`    … ${edited.length - 5} more edited (use --verbose)`));
+  }
+
+  const dupes = r.clusters.filter((c) => !c.syncedFrom);
+  const dupeArtifacts = dupes.reduce((n, c) => n + c.members.length, 0);
+  const synced = r.clusters.length - dupes.length;
+  h('NEAR-DUPLICATES', r.clusters.length ? `${dupes.length ? `${dupes.length} cluster${dupes.length === 1 ? '' : 's'} · ${dupeArtifacts} artifacts could be ${dupes.length}` : 'none to consolidate'}${synced ? ` · ${synced} cop${synced === 1 ? 'y' : 'ies'} of installed skills` : ''}` : 'none found');
   for (const cl of r.clusters.slice(0, o.verbose ? 100 : 8)) {
-    const tag = cl.exact ? green('identical') : `${Math.round(cl.similarity * 100)}% similar`;
+    const tag = cl.syncedFrom ? green(`copies of installed ${shortSource(cl.syncedFrom)}`) : cl.exact ? green('identical') : `${Math.round(cl.similarity * 100)}% similar`;
     out.push(`  ${amber('●')} ${bold(`"${cl.label}"`)} ×${cl.members.length}  ${dim(tag)}  ${dim(CATEGORY_LABELS[cl.category] ?? cl.category)}`);
     const shown = cl.members.slice(0, o.verbose ? 50 : 4);
     for (const m of shown) out.push(`      ${dim('–')} ${m.repo}/${m.relPath} ${dim(`(${AGENT_LABEL[m.agent] ?? m.agent})`)}`);
@@ -69,7 +89,8 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
   const steps: string[] = [];
   const sc = sure.filter((f) => f.severity === 'critical').length, sh = sure.filter((f) => f.severity === 'high').length;
   if (sc) steps.push(`Fix ${redB(sc + ' critical')} finding${sc === 1 ? '' : 's'} first: likely secrets or exfiltration.`);
-  if (r.clusters.length) steps.push(`Consolidate ${r.clusters.length} duplicate cluster${r.clusters.length === 1 ? '' : 's'} into shared skills (${r.stats.duplicateArtifacts} → ${r.clusters.length}).`);
+  if (dupes.length) steps.push(`Consolidate ${dupes.length} duplicate cluster${dupes.length === 1 ? '' : 's'} into shared skills (${dupeArtifacts} → ${dupes.length}).`);
+  if (r.stats.modifiedSinceInstall) steps.push(`Review ${r.stats.modifiedSinceInstall} installed skill${r.stats.modifiedSinceInstall === 1 ? '' : 's'} edited since install: they no longer match their source.`);
   if (sh) steps.push(`Review ${red(sh + ' high')} finding${sh === 1 ? '' : 's'}: permission bypasses, piped installs, risky hooks.`);
   const mcp = r.findings.filter((f) => f.ruleId === 'RK-MCP-001').length;
   if (mcp) steps.push(`Pin versions for ${mcp} MCP server${mcp === 1 ? '' : 's'}.`);

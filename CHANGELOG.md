@@ -2,6 +2,14 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- **skillshare support**: scans `~/.config/skillshare/` and project `.skillshare/` (or `skillshare/`) folders: skills, tracked skill repos, agents, extras, and MCP servers in `config.yaml` / `mcp.yaml`.
+- **Where skills come from**: install source, commit and "edited since install" from skillshare's metadata and lock files, and the source repo from `npx skills`' lock file. Shown in every report.
+- **Symlinks are followed** inside agent folders (skillshare and `npx skills` install by symlink), with a loop guard. Each real skill is reported once with the tools it's linked into; skillshare copy-mode copies fold into their source.
+- `--local` scans your user-level agent folders.
+- Skills in `.codex/skills/`, `.cursor/skills/` and `.gemini/skills/` are attributed to their tool.
+
 ## 0.1.0 — 2026-10-11
 
 First release.

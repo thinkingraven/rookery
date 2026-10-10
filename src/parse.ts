@@ -6,6 +6,7 @@ import type { Artifact, Hook, McpServer } from './types.js';
 import type { Candidate } from './discover.js';
 import { repoName } from './discover.js';
 import { categorize } from './categories.js';
+import { provenanceOf } from './provenance.js';
 
 const BUNDLED_EXT = new Set(['.sh', '.bash', '.zsh', '.py', '.js', '.mjs', '.cjs', '.ts', '.rb', '.ps1', '.pl', '.md', '.json', '.yaml', '.yml', '.toml', '.txt', '.mdc']);
 const MAX_BUNDLED_BYTES = 256 * 1024;
@@ -161,6 +162,11 @@ export function parseCandidate(c: Candidate, maxFileBytes: number): Artifact | n
     frontmatter = { permissions: obj?.permissions, defaultMode: obj?.permissions?.defaultMode };
   } else if (c.relPath.endsWith('config.toml')) {
     mcpServers = mcpFromCodexToml(text);
+  } else if (c.agent === 'skillshare' && /\.ya?ml$/.test(c.relPath)) {
+    // skillshare config.yaml (mcp.servers) or mcp.yaml (servers)
+    let obj: any = {};
+    try { obj = parseYaml(text) ?? {}; } catch { obj = {}; }
+    mcpServers = mcpFromObject(obj);
   } else {
     const fm = splitFrontmatter(text);
     frontmatter = fm.data;
@@ -194,5 +200,8 @@ export function parseCandidate(c: Candidate, maxFileBytes: number): Artifact | n
     category: categorize(`${name} ${description}`, body, c.kind),
     sha256: createHash('sha256').update(normalized).digest('hex'),
     frontmatter,
+    realPath: c.realPath,
+    links: c.links.map((l) => ({ repo: repoName(l.repoRoot), relPath: l.relPath, agent: l.agent, via: 'symlink' as const })),
+    provenance: provenanceOf(c.realPath, c.kind),
   };
 }

@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  Claude Code · Codex · Cursor · GitHub Copilot · Gemini CLI · Windsurf · MCP
+  Claude Code · Codex · Cursor · GitHub Copilot · Gemini CLI · Windsurf · MCP · skillshare · npx skills
 </p>
 
 <p align="center">
@@ -34,6 +34,7 @@ Every team ends up writing its own *review my PR*, *write a commit message* and 
 npx @thinkingraven/rookery scan .                         # one repo
 npx @thinkingraven/rookery scan ~/code                    # a folder of many repos
 npx @thinkingraven/rookery scan ~/code --html report.html # a shareable report
+npx @thinkingraven/rookery scan --local                   # your own machine (~/.claude, ~/.agents, skillshare…)
 ```
 
 Or install it: `npm install -g @thinkingraven/rookery`, then run `rookery scan .`. Node 20 or newer.
@@ -45,6 +46,7 @@ Or install it: `npm install -g @thinkingraven/rookery`, then run `rookery scan .
 | **Inventory** | Every skill, command, subagent, rules file, settings file, hook and MCP server, with its agent, purpose and size in tokens. |
 | **What teams keep building** | Artifacts grouped by purpose (code review, testing, commits, deployment…) and how many repos have one. A tall bar across many repos is your best candidate for one shared, reviewed skill. |
 | **Near-duplicates** | Copy-pasted and lightly edited skills clustered across repos *and* across agents. A Cursor rule, a Claude skill and a Copilot prompt can be the same thing. |
+| **Where skills come from** | Skills installed by [skillshare](https://github.com/runkids/skillshare) or `npx skills`: the source repo and commit, which tools each one is linked into, and which ones were **edited since install**. Symlinks and synced copies count once, not as duplicates. |
 | **Security findings** | 26 static checks on skill text, bundled scripts and agent config: secrets, exfiltration, prompt injection, hidden Unicode, harness overrides, piped installs, risky hooks, broad permissions and MCP servers. |
 
 Add `--html report.html` for a self-contained report you can send to your team:
@@ -58,14 +60,18 @@ Add `--html report.html` for a self-contained report you can send to your team:
 | Agent | Files |
 |---|---|
 | **Claude Code** | `.claude/skills/*/SKILL.md`, `.claude/commands/`, `.claude/agents/`, `.claude/settings*.json` (hooks, permissions), `CLAUDE.md`, `.mcp.json`, `.claude-plugin/` |
-| **Codex** | `AGENTS.md`, `.codex/config.toml` (MCP servers), `.codex/prompts/` |
-| **Cursor** | `.cursor/rules/*.mdc`, `.cursorrules`, `.cursor/commands/`, `.cursor/mcp.json` |
+| **Codex** | `AGENTS.md`, `.codex/config.toml` (MCP servers), `.codex/prompts/`, `.codex/skills/` |
+| **Cursor** | `.cursor/rules/*.mdc`, `.cursorrules`, `.cursor/commands/`, `.cursor/skills/`, `.cursor/mcp.json` |
 | **GitHub Copilot** | `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, `.github/chatmodes/`, `.github/agents/`, `.vscode/mcp.json` |
-| **Gemini CLI** | `GEMINI.md`, `.gemini/settings.json`, `.gemini/commands/` |
+| **Gemini CLI** | `GEMINI.md`, `.gemini/settings.json`, `.gemini/commands/`, `.gemini/skills/` |
 | **Windsurf** | `.windsurfrules`, `.windsurf/rules/`, `.windsurf/workflows/` |
+| **skillshare** | `~/.config/skillshare/` and a project's `.skillshare/` (or `skillshare/`): skills (including tracked repos), agents, extras (rules, commands), and MCP servers in `config.yaml` / `mcp.yaml`. Install records (`.metadata.json`, `skills.lock.json`, `.skillshare-manifest.json`) give each skill's source, commit and local edits |
+| **npx skills** | `.agents/skills/` with `.agents/.skill-lock.json` for install sources |
 | **Agent Skills** | any `SKILL.md` folder, including the scripts and references bundled next to it |
 
 Point it at one repo or a folder of many. Each nested `.git` counts as its own repo. Linked git worktrees (such as Claude Code's `.claude/worktrees/`) are skipped, so branch checkouts don't show up as duplicates; pass `--worktrees` to include them.
+
+Skill managers install by symlink, so rookery follows symlinks inside agent folders (with a loop guard) and reports each real skill once, listing every tool it's linked into. `--local` adds your user-level folders: `~/.claude`, `~/.agents`, `~/.codex`, `~/.cursor`, `~/.gemini` and `~/.config/skillshare`.
 
 ## Security rules
 
@@ -130,6 +136,7 @@ Exit codes: `0` OK · `1` high-confidence findings at or above `--fail-on` · `2
 | `--strict` | off | Count low-confidence findings for `--fail-on` too |
 | `--threshold <0-1>` | `0.5` | Near-duplicate similarity (Jaccard over word 3-grams) |
 | `--max-file-size <kb>` | `512` | Skip larger files |
+| `--local` | off | Also scan your user-level agent folders (`~/.claude`, `~/.agents`, `~/.codex`, `~/.cursor`, `~/.gemini`, `~/.config/skillshare`) |
 | `--worktrees` | off | Also scan linked git worktrees |
 | `--info` | off | Include info-level findings |
 | `--verbose` | off | Show everything in the terminal |
@@ -169,6 +176,12 @@ Secret scanners look for credentials in all of your code. Rookery understands ag
 <summary><b>My security skill is full of findings.</b></summary>
 
 Skills that teach security quote attacks. Most of those land as low confidence and are hidden from the summary. If one still shows as high confidence, add `rookery-ignore RK-XXX-000` after reviewing it, or [report a false positive](https://github.com/thinkingraven/rookery/issues/new?template=false-positive.yml).
+</details>
+
+<details>
+<summary><b>I use skillshare (or npx skills). Does rookery replace it?</b></summary>
+
+No. Those tools install and sync skills on one machine; rookery is the inventory and review layer across every repo and machine, whatever installed the skills. Rookery reads their install records to show where each skill came from and whether it was edited since install, and it never runs them.
 </details>
 
 <details>

@@ -1,4 +1,23 @@
-export type Agent = 'claude-code' | 'codex' | 'cursor' | 'copilot' | 'gemini' | 'windsurf' | 'agent-skills' | 'mcp';
+export type Agent = 'claude-code' | 'codex' | 'cursor' | 'copilot' | 'gemini' | 'windsurf' | 'skillshare' | 'agent-skills' | 'mcp';
+
+/** Another place the same artifact appears: a symlink to it, or a copy a sync tool made. */
+export interface ArtifactLink {
+  repo: string;
+  relPath: string;
+  agent: Agent;
+  via: 'symlink' | 'copy';
+}
+
+/** Who installed an artifact and from where, when a skill manager recorded it. */
+export interface Provenance {
+  manager: 'skillshare' | 'skills-cli';
+  source?: string;          // e.g. "anthropics/skills/skills/pdf"; absent for skills created locally
+  url?: string;             // git clone URL, when recorded
+  commit?: string;          // commit the install was pinned to, when recorded
+  installedAt?: string;
+  tracked?: boolean;        // skillshare tracked repo (keeps git history)
+  modified?: boolean;       // files changed since install (skillshare records sha256 per file)
+}
 
 export type ArtifactKind =
   | 'skill'          // SKILL.md (Agent Skills format)
@@ -47,6 +66,9 @@ export interface Artifact {
   category: string;
   sha256: string;           // hash of normalised content
   frontmatter: Record<string, unknown>;
+  realPath: string;         // absolute path after resolving symlinks
+  links: ArtifactLink[];    // other locations of the same file (symlinks, synced copies)
+  provenance?: Provenance;
 }
 
 export interface Finding {
@@ -71,6 +93,7 @@ export interface DuplicateCluster {
   similarity: number;       // average pairwise similarity (0..1)
   exact: boolean;           // all members identical after normalisation
   members: { artifactId: string; repo: string; relPath: string; name: string; agent: Agent }[];
+  syncedFrom?: string;      // every member was installed from this source: synced copies, not a team duplicate
 }
 
 export interface ScanResult {
@@ -91,6 +114,9 @@ export interface ScanResult {
     totalTokens: number;
     filesScanned: number;
     worktreesSkipped: number;
+    linkedArtifacts: number;          // artifacts that are also symlinked or copied elsewhere
+    managed: Record<string, number>;  // artifacts per skill manager (skillshare, skills-cli)
+    modifiedSinceInstall: number;
     durationMs: number;
   };
 }
@@ -101,6 +127,8 @@ export interface ScanOptions {
   includeInfo: boolean;
   similarityThreshold: number;
   worktrees?: boolean;
+  local?: boolean;          // also scan user-level agent folders under the home directory
+  home?: string;            // home directory for --local (tests override it)
 }
 
 export type Confidence = 'high' | 'low';
