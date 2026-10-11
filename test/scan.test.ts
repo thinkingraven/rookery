@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { scan } from '../src/scan.js';
 import { classify } from '../src/discover.js';
 import { categorize } from '../src/categories.js';
+import { renderSarif } from '../src/report/sarif.js';
+import { ALL_RULES } from '../src/rules.js';
 import { makeOrg, makeEmptyRepo } from './fixtures.js';
 
 const CLI = fileURLToPath(new URL('../src/cli.js', import.meta.url));
@@ -272,4 +274,59 @@ test('classifies skillshare and synced skill folders', () => {
   assert.deepEqual(classify('.codex/skills/pdf/SKILL.md'), { agent: 'codex', kind: 'skill' });
   assert.deepEqual(classify('.cursor/skills/pdf/SKILL.md'), { agent: 'cursor', kind: 'skill' });
   assert.equal(classify('docs/skillshare/config.yaml'), null);
+});
+
+test('SARIF: rules with code scanning severities, repo-relative locations and stable fingerprints', () => {
+  const run = JSON.parse(renderSarif(result, { base: org })).runs[0];
+  const rule = (id: string) => run.tool.driver.rules.find((r: { id: string }) => r.id === id);
+  assert.equal(run.tool.driver.name, 'rookery');
+  assert.deepEqual(run.tool.driver.rules.map((r: { id: string }) => r.id), ALL_RULES.map((r) => r.id));
+  assert.equal(rule('RK-SEC-001').properties['security-severity'], '9.5');
+  assert.deepEqual(rule('RK-SEC-001').properties.tags, ['security', 'ai-agents']);
+  assert.ok(!('security-severity' in rule('RK-QLT-001').properties), 'quality rules are not security alerts');
+
+  assert.equal(run.results.length, result.findings.filter((f) => f.confidence === 'high').length);
+  for (const res of run.results) assert.equal(run.tool.driver.rules[res.ruleIndex].id, res.ruleId);
+  const exf = run.results.find((res: { ruleId: string }) => res.ruleId === 'RK-EXF-001');
+  assert.equal(exf.level, 'error');
+  assert.deepEqual(exf.locations[0].physicalLocation, {
+    artifactLocation: { uri: 'repo-a/.claude/skills/deploy/scripts/deploy.sh', uriBaseId: '%SRCROOT%' },
+    region: { startLine: 3 },
+  });
+  const prints = run.results.map((res: { partialFingerprints: Record<string, string> }) => res.partialFingerprints['rookeryFinding/v1']);
+  assert.equal(new Set(prints).size, prints.length);
+  assert.deepEqual(JSON.parse(renderSarif(result, { base: org })).runs[0].results, run.results, 'same scan, same output');
+
+  // Files outside the base folder (for example --local) get absolute file URIs.
+  const empty = makeEmptyRepo();
+  const elsewhere = JSON.parse(renderSarif(result, { base: empty })).runs[0].results[0];
+  assert.match(elsewhere.locations[0].physicalLocation.artifactLocation.uri, /^file:\/\//);
+  assert.ok(!('uriBaseId' in elsewhere.locations[0].physicalLocation.artifactLocation));
+  rmSync(empty, { recursive: true, force: true });
+});
+
+test('SARIF: low-confidence findings only with --strict, and secrets never appear', async () => {
+  const { makeNoisyRepo } = await import('./fixtures.js');
+  const noisy = makeNoisyRepo();
+  const r = scan({ paths: [noisy], maxFileBytes: 512 * 1024, includeInfo: false, similarityThreshold: 0.5 });
+  const plain = renderSarif(r, { base: noisy });
+  const strict = renderSarif(r, { base: noisy, strict: true });
+  const results = (s: string) => JSON.parse(s).runs[0].results as { properties: { confidence: string } }[];
+  assert.ok(results(plain).every((res) => res.properties.confidence === 'high'));
+  assert.equal(results(strict).length, r.findings.length);
+  assert.ok(results(strict).some((res) => res.properties.confidence === 'low'));
+  for (const s of [plain, strict]) assert.ok(!s.includes('Ab3dE9fGh2JkL7mNoP4qRsT8') && !s.includes('b3BlbnNzaC1rZXktdjEAAAAABG5v'), 'no secret text');
+  rmSync(noisy, { recursive: true, force: true });
+});
+
+test('CLI: --sarif writes a file and --format sarif prints one, relative to the working folder', () => {
+  const repo = join(org, 'repo-a');
+  const run = spawnSync(process.execPath, [CLI, 'scan', '.', '--format', 'sarif', '--sarif', 'rookery.sarif'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const printed = JSON.parse(run.stdout);
+  assert.deepEqual(JSON.parse(readFileSync(join(repo, 'rookery.sarif'), 'utf8')), printed);
+  assert.equal(printed.version, '2.1.0');
+  const uris = printed.runs[0].results.map((res: { locations: { physicalLocation: { artifactLocation: { uri: string } } }[] }) => res.locations[0].physicalLocation.artifactLocation.uri);
+  assert.ok(uris.includes('.claude/skills/deploy/scripts/deploy.sh'), uris.join(', '));
+  rmSync(join(repo, 'rookery.sarif'));
 });

@@ -6,6 +6,7 @@ import { renderTerminal } from './report/terminal.js';
 import { renderJson } from './report/json.js';
 import { renderMarkdown } from './report/markdown.js';
 import { renderHtml } from './report/html.js';
+import { renderSarif } from './report/sarif.js';
 import { ALL_RULES } from './rules.js';
 import { SEVERITIES, type Severity } from './types.js';
 import { VERSION } from './version.js';
@@ -17,16 +18,18 @@ Usage
   rookery rules                  List every security rule
 
 Options
-  --format <terminal|json|markdown>   Output format on stdout (default: terminal)
+  --format <terminal|json|markdown|sarif>
+                                      Output format on stdout (default: terminal)
   --html <file>                       Also write a shareable HTML report
   --json <file>                       Also write the JSON report to a file
   --md <file>                         Also write a Markdown report to a file
+  --sarif <file>                      Also write SARIF 2.1.0 (GitHub code scanning) to a file
   --fail-on <severity>                Exit 1 if any finding is at or above this severity
                                       (critical, high, medium, low)
   --threshold <0-1>                   Near-duplicate similarity threshold (default: 0.5)
   --max-file-size <kb>                Skip files larger than this (default: 512)
-  --strict                            Count low-confidence findings for --fail-on
-                                      (examples, docs, tests) as well
+  --strict                            Count low-confidence findings for --fail-on and
+                                      include them in SARIF (examples, docs, tests)
   --info                              Include info-level findings
   --worktrees                         Also scan linked git worktrees (skipped by default)
   --local                             Also scan your user-level agent folders (~/.claude, ~/.agents,
@@ -58,6 +61,7 @@ function main(argv: string[]): number {
         html: { type: 'string' },
         json: { type: 'string' },
         md: { type: 'string' },
+        sarif: { type: 'string' },
         'fail-on': { type: 'string' },
         threshold: { type: 'string', default: '0.5' },
         'max-file-size': { type: 'string', default: '512' },
@@ -88,7 +92,7 @@ function main(argv: string[]): number {
   if (command !== 'scan' && command.startsWith('-')) fail(`unknown command: ${command}`);
 
   const format = o.format as string;
-  if (!['terminal', 'json', 'markdown'].includes(format)) fail(`--format must be terminal, json or markdown (got "${format}")`);
+  if (!['terminal', 'json', 'markdown', 'sarif'].includes(format)) fail(`--format must be terminal, json, markdown or sarif (got "${format}")`);
   const threshold = Number(o.threshold);
   if (!(threshold > 0 && threshold <= 1)) fail('--threshold must be a number between 0 and 1');
   const maxKb = Number(o['max-file-size']);
@@ -106,8 +110,10 @@ function main(argv: string[]): number {
   if (o.html) writeFileSync(o.html as string, renderHtml(result));
   if (o.json) writeFileSync(o.json as string, renderJson(result));
   if (o.md) writeFileSync(o.md as string, renderMarkdown(result));
+  if (o.sarif) writeFileSync(o.sarif as string, renderSarif(result, { strict: o.strict as boolean }));
 
   if (format === 'json') process.stdout.write(renderJson(result));
+  else if (format === 'sarif') process.stdout.write(renderSarif(result, { strict: o.strict as boolean }));
   else if (format === 'markdown') process.stdout.write(renderMarkdown(result));
   else {
     const color = !o['no-color'] && !process.env.NO_COLOR && (Boolean(process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') || process.stdout.isTTY === true);

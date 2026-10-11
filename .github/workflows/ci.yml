@@ -30,13 +30,25 @@ jobs:
   self-scan:
     name: rookery scans itself (via the action)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # SARIF upload to code scanning
     steps:
       - uses: actions/checkout@v7
       - uses: ./
         with:
           fail-on: high
           html: rookery-report.html
+          sarif: rookery.sarif
       - uses: actions/upload-artifact@v7
         with:
           name: rookery-report
-          path: rookery-report.html
+          path: |
+            rookery-report.html
+            rookery.sarif
+      - name: Upload SARIF to code scanning
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: rookery.sarif
+          category: rookery

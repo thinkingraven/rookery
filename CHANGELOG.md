@@ -2,6 +2,10 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- **SARIF 2.1.0 output** for GitHub code scanning and other SARIF viewers: `--sarif <file>` or `--format sarif`, and a `sarif` input on the GitHub Action. Every rule carries its severity for code scanning and a link to its docs; paths are repo-relative; fingerprints stay stable when lines move. Low-confidence findings are only included with `--strict`.
+
 ## 0.2.0 — 2026-10-11
 
 - **skillshare support**: scans `~/.config/skillshare/` and project `.skillshare/` (or `skillshare/`) folders: skills, tracked skill repos, agents, extras, and MCP servers in `config.yaml` / `mcp.yaml`.
