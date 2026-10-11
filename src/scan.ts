@@ -3,7 +3,7 @@ import { skillshareCopyName, skillshareFlatName } from './provenance.js';
 import { parseCandidate } from './parse.js';
 import { runRules } from './rules.js';
 import { findClusters } from './similarity.js';
-import { SEVERITIES, type Artifact, type ScanOptions, type ScanResult, type Severity } from './types.js';
+import { SEVERITIES, type Artifact, type Finding, type ScanOptions, type ScanResult, type Severity } from './types.js';
 import { VERSION } from './version.js';
 
 const CONTENT_CATEGORIES = new Set(['project-instructions', 'agent-settings', 'mcp-servers', 'plugin-manifest']);
@@ -11,7 +11,7 @@ const CONTENT_CATEGORIES = new Set(['project-instructions', 'agent-settings', 'm
 export function scan(opts: ScanOptions): ScanResult {
   const started = Date.now();
   const roots: Root[] = [...opts.paths, ...(opts.local ? localRoots(opts.home) : [])];
-  const { candidates, filesScanned, repos, worktreesSkipped } = discover(roots, { worktrees: opts.worktrees });
+  const { candidates, filesScanned, repos, allRepos, worktreesSkipped } = discover(roots, { worktrees: opts.worktrees });
 
   const parsed = candidates
     .map((c) => parseCandidate(c, opts.maxFileBytes))
@@ -20,8 +20,7 @@ export function scan(opts: ScanOptions): ScanResult {
   const artifacts = mergeSyncedCopies(parsed);
 
   const severityRank = (s: Severity) => SEVERITIES.indexOf(s);
-  const findings = artifacts
-    .flatMap(runRules)
+  const findings = dedupe(artifacts.flatMap(runRules))
     .filter((f) => opts.includeInfo || f.severity !== 'info')
     .sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || a.repo.localeCompare(b.repo) || a.relPath.localeCompare(b.relPath) || a.line - b.line);
 
@@ -68,6 +67,7 @@ export function scan(opts: ScanOptions): ScanResult {
       duplicateArtifacts: clusters.reduce((n, c) => n + c.members.length, 0),
       totalTokens: artifacts.reduce((n, a) => n + a.tokens, 0),
       filesScanned,
+      reposWithoutArtifacts: allRepos.filter((r) => !repos.includes(r)).length,
       worktreesSkipped: worktreesSkipped.length,
       linkedArtifacts: artifacts.filter((a) => a.links.length).length,
       managed: artifacts.reduce<Record<string, number>>((acc, a) => (a.provenance ? ((acc[a.provenance.manager] = (acc[a.provenance.manager] ?? 0) + 1), acc) : acc), {}),
@@ -75,6 +75,20 @@ export function scan(opts: ScanOptions): ScanResult {
       durationMs: Date.now() - started,
     },
   };
+}
+
+/**
+ * A file can be its own artifact and also a bundled file of a parent skill (a CLAUDE.md inside a skill folder).
+ * Report each finding once, under the file's own artifact when there is one.
+ */
+function dedupe(findings: Finding[]): Finding[] {
+  const byKey = new Map<string, Finding>();
+  for (const f of findings) {
+    const k = `${f.repo}|${f.ruleId}|${f.relPath}|${f.line}|${f.ruleId.startsWith('RK-HOOK') ? f.snippet : ''}`;
+    const prev = byKey.get(k);
+    if (!prev || (f.artifactId === `${f.repo}:${f.relPath}` && prev.artifactId !== `${prev.repo}:${prev.relPath}`)) byKey.set(k, f);
+  }
+  return [...byKey.values()];
 }
 
 /** Fold copies skillshare synced into tool folders (copy mode) into the source skill they came from. */

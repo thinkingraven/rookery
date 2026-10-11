@@ -17,7 +17,8 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
   const n = (x: number) => x.toLocaleString('en-US');
 
   const teamRepos = r.repos.filter((x) => x !== '~').length;
-  const scope = [teamRepos || !r.repos.includes('~') ? `${n(teamRepos)} repo${teamRepos === 1 ? '' : 's'}` : '', r.repos.includes('~') ? 'your home folder' : ''].filter(Boolean).join(' + ');
+  const empty = r.stats.reposWithoutArtifacts ? dim(` (+${n(r.stats.reposWithoutArtifacts)} with no agent files)`) : '';
+  const scope = [teamRepos || !r.repos.includes('~') ? `${n(teamRepos)} repo${teamRepos === 1 ? '' : 's'}${empty}` : '', r.repos.includes('~') ? 'your home folder' : ''].filter(Boolean).join(' + ');
   out.push(`${bold('rookery')}${amber('.')} ${dim(`v${r.tool.version}`)}  ${dim('·')}  ${scope}  ${dim('·')}  ${n(r.stats.filesScanned)} files  ${dim('·')}  ${(r.stats.durationMs / 1000).toFixed(1)}s${r.stats.worktreesSkipped ? dim(`  ·  ${r.stats.worktreesSkipped} git worktree${r.stats.worktreesSkipped === 1 ? '' : 's'} skipped (--worktrees to include)`) : ''}`);
 
   if (!r.artifacts.length) {

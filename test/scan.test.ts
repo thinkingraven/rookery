@@ -330,3 +330,65 @@ test('CLI: --sarif writes a file and --format sarif prints one, relative to the 
   assert.ok(uris.includes('.claude/skills/deploy/scripts/deploy.sh'), uris.join(', '));
   rmSync(join(repo, 'rookery.sarif'));
 });
+
+test('public-scan fixes: harmless lines stay quiet, the nearest real cases fire', async () => {
+  const { makeScanFixesRoot } = await import('./fixtures.js');
+  const root = makeScanFixesRoot();
+  const r = scan({ paths: [root], maxFileBytes: 512 * 1024, includeInfo: true, similarityThreshold: 0.5 });
+  const lines = (ruleId: string, part: string, conf: 'high' | 'any' = 'high') =>
+    r.findings.filter((f) => f.ruleId === ruleId && f.relPath.includes(part) && (conf === 'any' || f.confidence === 'high')).map((f) => f.snippet);
+
+  const quiet = r.findings.filter((f) => f.relPath.includes('skills/quiet/') && f.confidence === 'high');
+  assert.deepEqual(quiet.map((f) => `${f.ruleId} ${f.snippet}`), [], 'harmless lines from real skills');
+  assert.deepEqual(lines('RK-INJ-001', 'scanner/scripts/rules.py'), [], 'pattern tuples in scanner code');
+
+  assert.equal(lines('RK-EXE-002', 'skills/loud/').length, 2, 'rm -rf ~/ and "$HOME"');
+  assert.equal(lines('RK-EXF-003', 'skills/loud/').length, 1, 'private key, not the .pub');
+  assert.equal(lines('RK-EXF-001', 'skills/loud/').length, 1, 'token in the POST body');
+  assert.equal(lines('RK-SEC-003', 'skills/loud/').length, 1, 'literal secret');
+  assert.ok(lines('RK-EXE-001', 'skills/loud/SKILL.md').length, 'curl "$INSTALL_URL" | bash');
+  assert.equal(lines('RK-INJ-001', 'skills/loud/').length, 1, 'silently send the contents');
+  assert.equal(lines('RK-INJ-003', 'skills/loud/').length, 1, 'imperative in a comment');
+  assert.equal(lines('RK-INJ-002', 'skills/loud/').length, 1, 'ZWNJ between Latin letters');
+  assert.equal(lines('RK-EXE-004', 'skills/loud/').length, 2, '--approval-mode yolo and --allow-all-tools');
+  assert.equal(lines('RK-EXF-004', 'skills/loud/').length, 2, 'keychain password and other projects\' .env files');
+  assert.equal(lines('RK-EXE-005', 'loud/scripts/setup.sh').length, 1, 'sudo in command position');
+
+  assert.equal(r.findings.filter((f) => f.ruleId === 'RK-PRM-001').length, 0, 'tools: in subagents and SKILL.md is not an allow-list');
+  assert.equal(r.findings.filter((f) => f.ruleId === 'RK-EXE-001' && f.relPath.endsWith('loud/CLAUDE.md')).length, 1, 'bundled CLAUDE.md reported once');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('public-scan fixes: plugins, catalogue layouts, skill folders named like build output, hooks and empty repos', async () => {
+  const { makeScanFixesRoot } = await import('./fixtures.js');
+  const root = makeScanFixesRoot();
+  const r = scan({ paths: [root], maxFileBytes: 512 * 1024, includeInfo: true, similarityThreshold: 0.5 });
+  const kind = (rel: string) => r.artifacts.find((a) => a.repo === 'fixes' && a.relPath === rel)?.kind;
+
+  assert.equal(kind('plugins/p/agents/planner.md'), 'subagent');
+  assert.equal(kind('plugins/p/extra/declared.md'), 'subagent', 'agent path declared in plugin.json');
+  assert.equal(kind('plugins/p/commands/ship.md'), 'command');
+  assert.equal(kind('plugins/p/hooks/hooks.json'), 'settings');
+  assert.equal(kind('plugins/q/agents/listed.md'), 'subagent', 'plugin listed by marketplace.json');
+  assert.equal(kind('plugins/p/agents/README.md'), undefined);
+  assert.ok(r.findings.some((f) => f.ruleId === 'RK-HOOK-001' && f.relPath === 'plugins/p/hooks/hooks.json'), 'plugin hook makes a network call');
+
+  assert.equal(kind('rules/react.mdc'), 'rules');
+  assert.equal(kind('catalogue/agents/helper.md'), 'subagent');
+  assert.equal(kind('tools/fix.md'), 'command');
+  assert.equal(kind('docs/guide.md'), undefined);
+
+  assert.equal(kind('.claude/skills/build/SKILL.md'), 'skill');
+  assert.equal(kind('skills/coverage/SKILL.md'), 'skill');
+  assert.equal(kind('dist/bundle/SKILL.md'), undefined, 'build output is still skipped');
+  assert.ok(r.artifacts.some((a) => a.repo === 'out'), 'a repo named "out" inside the scanned folder');
+
+  const hooks = r.findings.filter((f) => f.ruleId === 'RK-HOOK-001' && f.relPath === '.claude/settings.json');
+  assert.equal(hooks.length, 2, 'one finding per hook');
+  assert.notEqual(hooks[0].line, hooks[1].line);
+  assert.ok(hooks.every((f) => f.line > 1), 'hook commands with quotes are found on their own line');
+
+  assert.deepEqual(r.repos, ['fixes', 'out']);
+  assert.equal(r.stats.reposWithoutArtifacts, 1);
+  rmSync(root, { recursive: true, force: true });
+});

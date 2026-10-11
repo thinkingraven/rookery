@@ -49,7 +49,7 @@ out.push(
   '',
   '## Suppressing a reviewed line',
   '',
-  'Put `rookery-ignore` (all rules) or `rookery-ignore RK-EXE-001 RK-SUP-002` (specific rules) on the line or the line above. Markers from other scanners are honoured too: `noqa`, `nosec`, `gitleaks:allow`, `trufflehog:ignore` and `pragma: allowlist secret`.',
+  'Put `rookery-ignore` (all rules) or `rookery-ignore RK-EXE-001 RK-SUP-002` (specific rules) on the line or the line above. Markers from other scanners are honoured too: `noqa`, `nosec`, `gitleaks:allow`, `trufflehog:ignore`, `pragma: allowlist secret` and `security-allowlist`.',
   '',
 );
 writeFileSync(new URL('../docs/rules.md', import.meta.url), out.join('\n'));

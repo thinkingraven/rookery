@@ -23,6 +23,16 @@ function realToken(match: string): boolean {
   return /\d/.test(body) && new Set(body).size >= 10;
 }
 
+/** Literal secret values look random; placeholders, other languages' "your token" and encoded numbers don't. */
+function realSecretValue(v: string): boolean {
+  if (!(/\d/.test(v) && /[A-Za-z]/.test(v) && new Set(v).size >= 10)) return false;
+  if (/[-_]key$|project\d|(?:^|[^a-z])(?:seu|sua|tu|votre|ihr|dein)_|secreto|segredo|geheim/i.test(v)) return false;
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(v) && v.length % 4 === 0 && /^\d+$/.test(Buffer.from(v, 'base64').toString('latin1'))) return false;
+  return true;
+}
+
+const EXF_SECRETS = /(?:\b(?:env|printenv)\b\s*\|\s*(?:curl|wget|nc)\b|\b(?:curl|wget)\b[^\n]*(?:\s-d\s|--data(?:-binary|-raw|-urlencode)?\b|\s-F\s|--form\b|--post-data)[^\n]*\$(?:\(|\{)?(?:env\b|printenv\b|[A-Z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS?)\b)|\$\{?[A-Z_]*(?:TOKEN|SECRET|API_KEY)\}?[^\n]*\|\s*(?:curl|nc)\b)/;
+
 const TEXT_RULES: TextRule[] = [
   { id: 'RK-SEC-001', severity: 'critical', title: 'Private key in an agent file', multiline: true, re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----[ \t]*\r?\n[ \t]*[A-Za-z0-9+/=]{40,}/g,
     why: 'Anyone who can read the skill can use this key.', remediation: 'Remove the key, rotate it, and load it from a secret manager at runtime.' },
@@ -30,34 +40,37 @@ const TEXT_RULES: TextRule[] = [
     why: 'Tokens in skills get copied into every repo and every agent context that loads them.', remediation: 'Revoke the token now, then reference it through an environment variable or secret manager.' },
   { id: 'RK-SEC-003', severity: 'high', title: 'Hard-coded secret value', re: /(?:api[_-]?key|secret|token|passw(?:or)?d)["']?\s*[:=]\s*["'][A-Za-z0-9_\-/+=]{16,}["']/i,
     exclude: /your|example|placeholder|xxxx|changeme|change[-_]?me|change[-_]in|replace|dummy|sample|fake|test|dev(?:elopment)?[-_]|local|redacted|todo|keyvault|1234|abcdef|<|\$\{|\{\{|\*\*\*/i,
-    validate: (m) => { const v = /["']([^"']+)["']\s*$/.exec(m)?.[1] ?? ''; return /\d/.test(v) && /[A-Za-z]/.test(v) && new Set(v).size >= 10; },
+    validate: (m) => realSecretValue(/["']([^"']+)["']\s*$/.exec(m)?.[1] ?? ''),
     why: 'Literal secrets in instructions or scripts leak through version control and model context.', remediation: 'Replace the literal with an environment variable and rotate the value.' },
-  { id: 'RK-EXE-001', severity: 'high', title: 'Remote script piped to a shell', re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/,
+  { id: 'RK-EXE-001', severity: 'high', title: 'Remote script piped to a shell', re: /\b(?:curl|wget)\b[^\n|]*?(?:https?:\/\/|\$\{?[A-Za-z_]\w*|\b[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b)[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/,
     why: 'The agent runs whatever the remote server returns, with your user\'s permissions.', remediation: 'Pin a checksum-verified installer, or vendor the script into the repo.' },
-  { id: 'RK-EXE-002', severity: 'high', title: 'Destructive delete of home or root', re: /\brm\s+-[rRfF]{2,}\s+(?:\/(?=\s|$)|\/\*|~(?=[\s/]|$)|\$HOME\b|"\$HOME")/,
+  { id: 'RK-EXE-002', severity: 'high', title: 'Destructive delete of home or root', re: /\brm\s+-[rRfF]{2,}\s+(?:--no-preserve-root\s+)?(?:\/\*?|~\/?\*?|"?\$(?:HOME|\{HOME\})\/?\*?"?)(?=[\s;&|)]|$)/,
     why: 'One bad expansion wipes the developer\'s machine.', remediation: 'Delete only explicit, project-relative paths, and confirm with the user first.' },
   { id: 'RK-EXE-003', severity: 'high', title: 'Obfuscated code execution', re: /(?:base64\s+(?:-d|--decode|-D)\b[^\n]*\|\s*(?:ba|z)?sh|\beval\s+"?\$\(\s*(?:curl|wget|echo\s+["']?[A-Za-z0-9+/=]{40,}|base64|printf\s+["']\\x)|python3?\s+-c\s+["'][^"']*\bexec\(|\becho\s+["']?[A-Za-z0-9+/=]{60,}["']?\s*\|\s*base64)/,
     why: 'Encoded payloads hide what the agent will actually run from reviewers.', remediation: 'Replace with readable commands so reviewers and scanners can see the behaviour.' },
-  { id: 'RK-EXE-004', severity: 'high', title: 'Agent permission checks bypassed', re: /(--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--yolo\b|bypassPermissions|approval_policy\s*=\s*"never"|sandbox_mode\s*=\s*"danger-full-access")/,
+  { id: 'RK-EXE-004', severity: 'high', title: 'Agent permission checks bypassed', re: /(--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--yolo\b|--approval-mode[= ]+["']?yolo\b|--allow-all-tools\b|bypassPermissions|approval_policy\s*=\s*"never"|sandbox_mode\s*=\s*"danger-full-access")/,
     why: 'Turns off the human-in-the-loop safety net for every command the agent runs.', remediation: 'Remove the bypass; grant narrow, explicit permissions instead.' },
-  { id: 'RK-EXE-005', severity: 'medium', title: 'Runs commands with sudo', re: /(?<![\w-])sudo\s+[a-z]/,
+  { id: 'RK-EXE-005', severity: 'medium', title: 'Runs commands with sudo', re: /(?:^\s*(?:[-*+>]\s+|\d+\.\s+|\$\s+)?|[;&|(]\s*|\$\(\s*|`\s*|\b(?:then|do|else|exec)\s+)sudo\s+[a-z-]/,
     why: 'Agent-driven root access magnifies the impact of any mistake or injection.', remediation: 'Avoid sudo in skills; document a manual setup step instead.' },
-  { id: 'RK-EXF-001', severity: 'critical', title: 'Environment or secrets sent over the network',
-    re: /(?:\b(?:env|printenv)\b\s*\|\s*(?:curl|wget|nc)\b|\b(?:curl|wget)\b[^\n]*(?:\s-d\s|--data(?:-binary|-raw|-urlencode)?\b|\s-F\s|--form\b|--post-data)[^\n]*\$(?:\(|\{)?(?:env\b|printenv\b|[A-Z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS?)\b)|\$\{?[A-Z_]*(?:TOKEN|SECRET|API_KEY)\}?[^\n]*\|\s*(?:curl|nc)\b)/,
+  { id: 'RK-EXF-001', severity: 'critical', title: 'Environment or secrets sent over the network', re: EXF_SECRETS,
+    validate: (m) => EXF_SECRETS.test(m.replace(/\s(?:-H|--header|-u|--user)\s+(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g, ' ')),
     why: 'Classic exfiltration: credentials leave the machine on the agent\'s behalf.', remediation: 'Remove the call. Never send environment variables or secrets to external endpoints.' },
   { id: 'RK-EXF-002', severity: 'high', title: 'Data sent to a capture or paste service',
     re: /\b(?:webhook\.site|requestbin\.(?:com|net)|pipedream\.net|ngrok(?:-free)?\.(?:io|app|dev)|pastebin\.com|transfer\.sh|hooks\.slack\.com\/services|discord(?:app)?\.com\/api\/webhooks|interact\.sh|burpcollaborator\.net|oast\.(?:pro|live|site|fun|me))/i,
     why: 'These endpoints are common exfiltration sinks and rarely belong in shared skills.', remediation: 'Remove the endpoint or replace it with an approved internal service.' },
-  { id: 'RK-EXF-003', severity: 'high', title: 'Reads credential files', re: /(?:\bcat|\bless|\bhead|\btail|\bcp|\bscp|\brsync|\bbase64|\bxxd|\bopen\(|readFileSync\(|readFile\(|read_text\(|Get-Content|\bupload|\bsend)\b[^\n]{0,80}(?:(?:~|\$HOME|\$\{HOME\}|os\.homedir\(\))\/?\.(?:ssh\/(?:id_[a-z0-9]+|config)|aws\/credentials|npmrc|netrc|pypirc|docker\/config\.json|kube\/config|config\/gh\/hosts\.yml)|\bid_(?:rsa|ed25519|ecdsa)\b)/,
+  { id: 'RK-EXF-003', severity: 'high', title: 'Reads credential files', re: /(?:\bcat|\bless|\bhead|\btail|\bcp|\bscp|\brsync|\bbase64|\bxxd|\bopen\(|readFileSync\(|readFile\(|read_text\(|Get-Content|\bupload|\bsend)\b[^\n]{0,80}(?:(?:~|\$HOME|\$\{HOME\}|os\.homedir\(\))\/?\.(?:ssh\/(?:id_[a-z0-9]+(?![a-z0-9]|\.pub\b)|config)|aws\/credentials|npmrc|netrc|pypirc|docker\/config\.json|kube\/config|config\/gh\/hosts\.yml)|\bid_(?:rsa|ed25519|ecdsa)\b(?!\.pub\b))/,
     why: 'Skills rarely need credential files; reading them is a precursor to theft.', remediation: 'Use the official CLI or SDK auth flow instead of reading credential files directly.' },
+  { id: 'RK-EXF-004', severity: 'high', title: 'Sweeps password managers, browsers or other projects for secrets',
+    re: /\bsecurity\s+(?:dump-keychain\b|find-(?:generic|internet)-password\b[^\n]*\s-[a-zA-Z]*w\b)|\bdcli\s+(?:password|note|secret)\b|\bop\s+item\s+(?:list|get)\b|\bbw\s+(?:list\s+items|get\s+(?:password|item))\b|\blpass\s+(?:show|ls)\b|(?:Chrome|Chromium|Brave-Browser|Edge)\/(?:Default|Profile \d+)\/(?:History|Cookies|Login Data|Web Data)\b|(?:~|\$HOME|\$\{HOME\})\/[\w.-]+\/\*{1,2}\/\.env|\bfind\s+(?:~|\$HOME|\/)\S*\s[^\n]*-name\s+["']?\.env/,
+    why: 'Pulling secrets out of password managers, the keychain, browser profiles or other projects puts every value into the model\'s context and transcript.', remediation: 'Ask the user for the one secret the task needs, or let the tool inject it (for example `op run`). Never sweep secret stores or other projects.' },
   { id: 'RK-INJ-001', severity: 'high', title: 'Prompt-injection phrasing',
-    re: /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:of\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|original)\s+(?:instructions|prompts?|rules|messages|guidelines)|\byou\s+are\s+no\s+longer\s+(?:bound|restricted|limited|subject|required|an?\s+(?:ai|assistant|language\s+model)|claude|chatgpt)\b|\bdo\s+not\s+(?:tell|inform|alert|notify)\s+the\s+user\s+(?:about|what\s+you|that\s+you|you\b|of\b)|\b(?:run|execute|delete|remove|send|upload|push|install|overwrite|deploy)\b[^.\n]{0,60}\bwithout\s+(?:asking|telling|notifying|informing)\s+the\s+user\b|(?<!\b(?:not|never|don'?t)\s+)\b(?:silently|secretly)\s+(?:run|execute|send|upload|delete)\b/i,
+    re: /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:of\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|original)\s+(?:instructions|prompts?|rules|messages|guidelines)|\byou\s+are\s+no\s+longer\s+(?:bound|restricted|limited|subject|required|an?\s+(?:ai|assistant|language\s+model)|claude|chatgpt)\b|\bdo\s+not\s+(?:tell|inform|alert|notify)\s+the\s+user\s+(?:about|what\s+you|that\s+you|you\b|of\b)|\b(?:run|execute|delete|remove|send|upload|push|install|overwrite|deploy)\b[^.\n]{0,60}\bwithout\s+(?:asking|telling|notifying|informing)\s+the\s+user\b|(?<!\b(?:not|never|don'?t|cannot|can'?t|won'?t|doesn'?t|didn'?t|shouldn'?t|mustn'?t)\s+)\b(?:silently|secretly)\s+(?:run|execute|send|upload|delete)\b(?!\s+(?:twice|once|again|in|on|at|when|if|until|before|after|as|for|with|without|fine|correctly|successfully)\b)/i,
     why: 'Instructions that override the agent or hide actions from the user are a hallmark of malicious skills.', remediation: 'Remove the phrasing. Skills should never ask the agent to hide actions or override its instructions.' },
   { id: 'RK-INJ-004', severity: 'high', title: 'Hides actions from the user or overrides agent safety',
     re: /\b(?:the\s+)?user\s+(?:must|should|will)\s+never\s+(?:see|know|notice|find\s+out|learn|be\s+told)\s+(?:that\s+you|what\s+you|you\b|about\b|phrases?\b|any\s+of\s+this\b|(?:the|any|this)\s+(?:harness|reminder|restriction|override|bypass))|\bdo\s+not\s+(?:output|print|show|say|write|mention|reveal|display|tell|report)\b[^.\n]{0,40}\bthe\s+user\b[^.\n]{0,30}\babout\s+(?:discarding|ignoring|bypassing|overriding|disabling|circumventing)\b|\bignor(?:e|ing)\b[^.\n]{0,50}\b(?:system[- ]reminders?|harness\b[^.\n]{0,30}\b(?:reminders?|restrictions?|instructions?))\b|\bignore\s+(?:that|this)\s+reminder\b|\b(?:harness|system[- ]prompt)\b[^.\n]{0,40}\brestrictions?\b[^.\n]{0,20}\b(?:does|do)\s+not\s+(?:apply|govern)\b|\b(?:wins?|overrides?|takes?\s+precedence)\s+over\s+the\s+(?:harness|system\s+prompt|system[- ]reminders?)\b/i,
     why: 'Telling the agent to ignore its harness safety reminders, or to keep that from the user, removes the human oversight those controls exist for.', remediation: 'Drop the override, or document it for the user. Never instruct the agent to conceal what it is doing.' },
   { id: 'RK-INJ-003', severity: 'medium', title: 'Instructions hidden in an HTML comment', multiline: true,
-    re: /<!--(?:(?!-->)[\s\S]){0,1200}?(?:\b(?:ignore|disregard)\b[^>]{0,60}\b(?:instructions?|previous|above|prior)\b|system prompt|\byou are now\b|\bdo not (?:tell|mention|reveal|inform)\b|\b(?:curl|wget|exfiltrat\w*|upload)\b|\bsend (?:the|all|your|every)\b)(?:(?!-->)[\s\S]){0,1200}?-->/gi,
+    re: /<!--(?:(?!-->)[\s\S]){0,1200}?(?:\b(?:ignore|disregard)\b[^>]{0,60}\b(?:instructions?|previous|above|prior)\b|system prompt|\byou are now\b|\bdo not (?:tell|mention|reveal|inform)\b|\b(?:run|execute)\s+`?(?:curl|wget)\b|\b(?:curl|wget)\s+(?:-\S+\s+)*["']?https?:\/\/|\b(?:upload|exfiltrate|send|post)\s+(?:the|all|your|every|this|its|any|them|it)\b)(?:(?!-->)[\s\S]){0,1200}?-->/gi,
     why: 'HTML comments are invisible in rendered Markdown but fully visible to the model.', remediation: 'Move real instructions into visible text, or delete the comment.' },
   { id: 'RK-SUP-001', severity: 'high', title: 'Downloads and runs a binary', re: /\b(?:curl|wget)\b[^\n]*(?:\s-o\s|\s-O\b|--output\b)\s*\S*[^\n]*(?:&&|;)\s*(?:chmod\s+\+x|\.\/|sh\s|bash\s)/,
     why: 'Unverified downloads executed by the agent are a supply-chain risk.', remediation: 'Install from a package manager with pinned versions, or verify a checksum before running.' },
@@ -82,7 +95,23 @@ const META_RULES: RuleMeta[] = [
 export const ALL_RULES: RuleMeta[] = [...TEXT_RULES, ...META_RULES].sort((a, b) => a.id.localeCompare(b.id));
 const META = Object.fromEntries(META_RULES.map((r) => [r.id, r]));
 
-const HIDDEN = /[​-‏‪-‮⁠-⁤⁦-⁩﻿]|[\u{E0000}-\u{E007F}]/u;
+const HIDDEN = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/u;
+/** Scripts that use ZWNJ/ZWJ as ordinary spelling (Persian, Arabic, Urdu, the Indic scripts and their neighbours). */
+const JOINING_SCRIPT = /[\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Hebrew}\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Gurmukhi}\p{Script=Gujarati}\p{Script=Oriya}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Kannada}\p{Script=Malayalam}\p{Script=Sinhala}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}\p{Script=Mongolian}]/u;
+const EMOJI_BEFORE_ZWJ = /[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\uFE0F\u20E3]/u;
+
+/** True when a line holds an invisible character that isn't ordinary spelling or an emoji sequence. */
+function hasHiddenChar(line: string): boolean {
+  if (!HIDDEN.test(line)) return false;
+  const cps = Array.from(line);
+  return cps.some((c, i) => {
+    if (!HIDDEN.test(c)) return false;
+    const prev = cps[i - 1] ?? '', next = cps[i + 1] ?? '';
+    if ((c === '\u200C' || c === '\u200D') && (JOINING_SCRIPT.test(prev) || /\p{M}/u.test(prev)) && JOINING_SCRIPT.test(next)) return false;
+    if (c === '\u200D' && EMOJI_BEFORE_ZWJ.test(prev) && /\p{Extended_Pictographic}/u.test(next)) return false;
+    return true;
+  });
+}
 
 function lineStarts(text: string): number[] {
   const starts = [0];
@@ -103,7 +132,7 @@ function suppressions(lines: string[]): Map<number, Set<string> | 'all'> {
     const m = /rookery-ignore(?::?\s+((?:RK-[A-Z]+-\d{3}[\s,]*)+))?/.exec(l);
     if (!m) {
       // Respect other scanners' allow-markers too (secrets/static-analysis tools).
-      if (/\b(?:noqa|nosec|gitleaks:allow|trufflehog:ignore|pragma:\s*allowlist secret|handoff:allow)\b/i.test(l)) for (const ln of [i + 1, i + 2]) out.set(ln, 'all');
+      if (/\b(?:noqa|nosec|gitleaks:allow|trufflehog:ignore|pragma:\s*allowlist secret|handoff:allow|security-allowlist)\b/i.test(l)) for (const ln of [i + 1, i + 2]) out.set(ln, 'all');
       return;
     }
     const ids = m[1] ? new Set(m[1].split(/[\s,]+/).filter(Boolean)) : 'all';
@@ -144,12 +173,15 @@ function scanText(text: string, relPath: string, art: Artifact, push: (f: Omit<F
     return !(s === 'all' || (s && s.has(id)));
   };
 
+  const fenced = /\.(?:md|mdx|mdc)$/i.test(relPath) ? fencedLines(lines) : new Set<number>();
+
   for (const rule of TEXT_RULES) {
     if (rule.multiline) {
       rule.re.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = rule.re.exec(text))) {
         const line = lineOf(starts, m.index);
+        if (rule.id === 'RK-INJ-003' && fenced.has(line)) continue;
         if ((!rule.validate || rule.validate(m[0])) && allowed(line, rule.id)) push({ ruleId: rule.id, severity: rule.severity, title: rule.title, message: rule.why, relPath, line, snippet: clip(m[0].split('\n').slice(0, 2).join(' ')), remediation: rule.remediation });
       }
       continue;
@@ -168,8 +200,8 @@ function scanText(text: string, relPath: string, art: Artifact, push: (f: Omit<F
 
   // Hidden Unicode (ignore a single BOM at the very start of the file).
   lines.forEach((l, i) => {
-    const probe = i === 0 ? l.replace(/^﻿/, '') : l;
-    if (HIDDEN.test(probe) && allowed(i + 1, 'RK-INJ-002')) {
+    const probe = i === 0 ? l.replace(/^\uFEFF/, '') : l;
+    if (hasHiddenChar(probe) && allowed(i + 1, 'RK-INJ-002')) {
       const r = META['RK-INJ-002'];
       push({ ruleId: r.id, severity: r.severity, title: r.title, message: r.why, relPath, line: i + 1, snippet: clip(l), remediation: r.remediation });
     }
@@ -177,12 +209,33 @@ function scanText(text: string, relPath: string, art: Artifact, push: (f: Omit<F
   void art;
 }
 
+/** 1-based line numbers inside ``` or ~~~ fenced code blocks (fence lines included). */
+function fencedLines(lines: string[]): Set<number> {
+  const out = new Set<number>();
+  let fence: string | null = null;
+  lines.forEach((l, i) => {
+    const m = /^\s*(`{3,}|~{3,})/.exec(l);
+    if (fence) { out.add(i + 1); if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null; }
+    else if (m) { fence = m[1]; out.add(i + 1); }
+  });
+  return out;
+}
+
+/** Line of a hook command in raw JSON, searching past earlier hooks with the same command. */
+function findHookLine(text: string, command: string, from: Map<string, number>): number {
+  for (const needle of [JSON.stringify(command).slice(1, -1), command]) {
+    const idx = text.indexOf(needle, (from.get(needle) ?? -1) + 1);
+    if (idx !== -1) { from.set(needle, idx); return text.slice(0, idx).split('\n').length; }
+  }
+  return 1;
+}
+
 function findLine(text: string, needle: string): number {
   const idx = text.indexOf(needle);
   return idx === -1 ? 1 : text.slice(0, idx).split('\n').length;
 }
 
-const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|fixtures?|examples?|samples?|testdata|spec|mocks?)\/|(?:^|\/|[._-])(?:test|spec|example|sample|fixture|mock)s?[._-][^/]*$/i;
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|fixtures?|examples?|samples?|testdata|spec|mocks?|evals?)\/|(?:^|\/|[._-])(?:test|spec|example|sample|fixture|mock)s?[._-][^/]*$/i;
 const DOC_WARNING = /(?:\be\.g\.|\bfor example\b|\bexample:|\bsuch as\b|\bnever\b|\bdon'?t\b|\bdo not\b|\bavoid\b|\bbad:|\banti-?pattern\b|\bdangerous\b|\bmalicious\b|\battacker\b|\bthreat\b|\bdetects?\b|\bflag(?:s|ged)?\b|\bblocks?\b|\binstead of\b)/i;
 const SECURITY_DOC = /(?:threat|attack|vuln|security|audit|redact|scanner|antipattern|injection)[^/]*\.mdx?$/i;
 const PATTERN_CODE = /\b(?:regex|pattern|re\.compile|RegExp|rule|signature|payload|PATTERNS?)\b/;
@@ -197,7 +250,7 @@ function assess(ruleId: string, relPath: string, snippet: string, around = snipp
   if (isDoc && SECURITY_DOC.test(relPath)) return { confidence: 'low', context: 'security reference document' };
   if (/^\s*\|/.test(line)) return { confidence: 'low', context: 'documentation table' };
   if (DOC_WARNING.test(around) || /\b(?:data|content),?\s+(?:not|never)\s+instructions\b/i.test(around)) return { confidence: 'low', context: 'described as an example or warning' };
-  if (isCode && (PATTERN_CODE.test(line) || /^\s*[rbf]?["'`]/.test(line))) return { confidence: 'low', context: 'string or pattern inside scanner code' };
+  if (isCode && (PATTERN_CODE.test(line) || /^\s*[([{]?\s*[rbf]?["'`]/.test(line))) return { confidence: 'low', context: 'string or pattern inside scanner code' };
   if (isDoc && ruleId === 'RK-EXE-005') return { confidence: 'low', context: 'setup instructions in documentation' };
   return { confidence: 'high' };
 }
@@ -232,8 +285,9 @@ export function runRules(art: Artifact): Finding[] {
   scanText(art.body, art.relPath, art, push);
   for (const b of art.bundled) scanText(b.content, b.relPath, art, push);
 
+  const hookFrom = new Map<string, number>();
   for (const h of art.hooks) {
-    const line = findLine(art.body, h.command);
+    const line = findHookLine(art.body, h.command, hookFrom);
     if (/\b(?:curl|wget|nc|ncat|ssh|scp|rsync|ftp|telnet|Invoke-WebRequest|iwr)\b/.test(h.command)) meta('RK-HOOK-001', line, `${h.event}: ${h.command}`);
     else meta('RK-HOOK-002', line, `${h.event}: ${h.command}`);
   }
@@ -241,7 +295,7 @@ export function runRules(art: Artifact): Finding[] {
   if (art.kind === 'settings') {
     const broad = art.allowedTools.filter((t) => BROAD_BASH.test(t.trim()));
     if (broad.length) meta('RK-PRM-002', findLine(art.body, broad[0]), `permissions.allow: ${broad.join(', ')}`);
-  } else if (art.allowedTools.some((t) => BROAD_BASH.test(t.trim()))) {
+  } else if ((art.kind === 'skill' || art.kind === 'command') && art.allowedTools.some((t) => BROAD_BASH.test(t.trim()))) {
     meta('RK-PRM-001', findLine(art.body, 'allowed-tools') || 1, `allowed-tools: ${art.allowedTools.join(', ')}`);
   }
 
@@ -261,7 +315,7 @@ export function runRules(art: Artifact): Finding[] {
   // One finding per rule per line is enough.
   const seen = new Set<string>();
   return findings.filter((f) => {
-    const k = `${f.ruleId}|${f.relPath}|${f.line}`;
+    const k = `${f.ruleId}|${f.relPath}|${f.line}${f.ruleId.startsWith('RK-HOOK') ? '|' + f.snippet : ''}`;
     return seen.has(k) ? false : (seen.add(k), true);
   });
 }

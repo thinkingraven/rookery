@@ -113,6 +113,7 @@ export interface ScanResult {
     duplicateArtifacts: number;
     totalTokens: number;
     filesScanned: number;
+    reposWithoutArtifacts: number;    // repos scanned that had no agent files (catalogue layouts are a common cause)
     worktreesSkipped: number;
     linkedArtifacts: number;          // artifacts that are also symlinked or copied elsewhere
     managed: Record<string, number>;  // artifacts per skill manager (skillshare, skills-cli)
