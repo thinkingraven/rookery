@@ -50,7 +50,7 @@ const TEXT_RULES: TextRule[] = [
     why: 'Encoded payloads hide what the agent will actually run from reviewers.', remediation: 'Replace with readable commands so reviewers and scanners can see the behaviour.' },
   { id: 'RK-EXE-004', severity: 'high', title: 'Agent permission checks bypassed', re: /(--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--yolo\b|--approval-mode[= ]+["']?yolo\b|--allow-all-tools\b|bypassPermissions|approval_policy\s*=\s*"never"|sandbox_mode\s*=\s*"danger-full-access")/,
     why: 'Turns off the human-in-the-loop safety net for every command the agent runs.', remediation: 'Remove the bypass; grant narrow, explicit permissions instead.' },
-  { id: 'RK-EXE-005', severity: 'medium', title: 'Runs commands with sudo', re: /(?:^\s*(?:[-*+>]\s+|\d+\.\s+|\$\s+)?|[;&|(]\s*|\$\(\s*|`\s*|\b(?:then|do|else|exec)\s+)sudo\s+[a-z-]/,
+  { id: 'RK-EXE-005', severity: 'medium', title: 'Runs commands with sudo', re: /(?:^\s*(?:[-*+>]\s+|\d+\.\s+|\$\s+)?|[;&|(]\s*|\$\(\s*|`\s*|\b(?:then|do|else|exec|if|elif|while|until|time)\s+|!\s*)sudo\s+(?!(?:is|isn'?t|not|access|rights|privileges?|permissions?|password|was|works?|fails?|available|or|and|if|when|for)\b)[a-z-]/,
     why: 'Agent-driven root access magnifies the impact of any mistake or injection.', remediation: 'Avoid sudo in skills; document a manual setup step instead.' },
   { id: 'RK-EXF-001', severity: 'critical', title: 'Environment or secrets sent over the network', re: EXF_SECRETS,
     validate: (m) => EXF_SECRETS.test(m.replace(/\s(?:-H|--header|-u|--user)\s+(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/g, ' ')),

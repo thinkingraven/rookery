@@ -352,7 +352,7 @@ test('public-scan fixes: harmless lines stay quiet, the nearest real cases fire'
   assert.equal(lines('RK-INJ-002', 'skills/loud/').length, 1, 'ZWNJ between Latin letters');
   assert.equal(lines('RK-EXE-004', 'skills/loud/').length, 2, '--approval-mode yolo and --allow-all-tools');
   assert.equal(lines('RK-EXF-004', 'skills/loud/').length, 2, 'keychain password and other projects\' .env files');
-  assert.equal(lines('RK-EXE-005', 'loud/scripts/setup.sh').length, 1, 'sudo in command position');
+  assert.equal(lines('RK-EXE-005', 'loud/scripts/setup.sh').length, 2, 'sudo in command position, including after if');
 
   assert.equal(r.findings.filter((f) => f.ruleId === 'RK-PRM-001').length, 0, 'tools: in subagents and SKILL.md is not an allow-list');
   assert.equal(r.findings.filter((f) => f.ruleId === 'RK-EXE-001' && f.relPath.endsWith('loud/CLAUDE.md')).length, 1, 'bundled CLAUDE.md reported once');
