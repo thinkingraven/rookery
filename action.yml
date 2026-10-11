@@ -15,6 +15,9 @@ inputs:
   html:
     description: Also write a self-contained HTML report to this path (upload it with actions/upload-artifact).
     default: ''
+  sarif:
+    description: Also write SARIF 2.1.0 to this path (upload it with github/codeql-action/upload-sarif to see findings in code scanning).
+    default: ''
   args:
     description: Extra CLI options, for example "--strict --threshold 0.6".
     default: ''
@@ -34,6 +37,7 @@ runs:
         ROOKERY_PATH: ${{ inputs.path }}
         ROOKERY_FAIL_ON: ${{ inputs.fail-on }}
         ROOKERY_HTML: ${{ inputs.html }}
+        ROOKERY_SARIF: ${{ inputs.sarif }}
         ROOKERY_ARGS: ${{ inputs.args }}
         FORCE_COLOR: '1'
       # Inputs arrive through env, never interpolated into the script.
@@ -42,4 +46,5 @@ runs:
         args=(scan $ROOKERY_PATH --md "$GITHUB_STEP_SUMMARY")
         if [ -n "$ROOKERY_FAIL_ON" ]; then args+=(--fail-on "$ROOKERY_FAIL_ON"); fi
         if [ -n "$ROOKERY_HTML" ]; then args+=(--html "$ROOKERY_HTML"); fi
+        if [ -n "$ROOKERY_SARIF" ]; then args+=(--sarif "$ROOKERY_SARIF"); fi
         node "$ROOKERY_CLI" "${args[@]}" $ROOKERY_ARGS

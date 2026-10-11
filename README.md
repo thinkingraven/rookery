@@ -109,14 +109,46 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: thinkingraven/rookery@v0
         with:
           fail-on: high              # critical | high | medium | low | '' (never fail)
           html: rookery-report.html  # optional
 ```
 
-The findings land in the job summary. Inputs: `path` (default `.`), `fail-on` (default `high`), `html`, and `args` for any other options (for example `--strict`).
+The findings land in the job summary. Inputs: `path` (default `.`), `fail-on` (default `high`), `html`, `sarif`, and `args` for any other options (for example `--strict`).
+
+### GitHub code scanning
+
+Write SARIF and upload it, and findings show up as alerts in the repo's **Security** tab and as annotations on pull requests:
+
+```yaml
+# .github/workflows/rookery.yml
+name: rookery
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: thinkingraven/rookery@v0
+        with:
+          fail-on: high
+          sarif: rookery.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()               # upload even when fail-on stops the job
+        with:
+          sarif_file: rookery.sarif
+          category: rookery
+```
+
+Code scanning shows each rule's severity (critical, high, medium, low) and links to its entry in [docs/rules.md](docs/rules.md). Low-confidence findings (examples, docs, tests) are left out of the SARIF unless you pass `--strict`, so they don't open alerts. Any other SARIF viewer works too: `npx -y @thinkingraven/rookery scan . --sarif rookery.sarif`.
 
 ### Anywhere else
 
@@ -130,10 +162,10 @@ Exit codes: `0` OK · `1` high-confidence findings at or above `--fail-on` · `2
 
 | Option | Default | Description |
 |---|---|---|
-| `--format <terminal\|json\|markdown>` | `terminal` | Output on stdout |
-| `--html <file>` · `--json <file>` · `--md <file>` | | Also write a report file |
+| `--format <terminal\|json\|markdown\|sarif>` | `terminal` | Output on stdout |
+| `--html <file>` · `--json <file>` · `--md <file>` · `--sarif <file>` | | Also write a report file |
 | `--fail-on <severity>` | | Exit 1 on high-confidence findings at or above `critical`, `high`, `medium` or `low` |
-| `--strict` | off | Count low-confidence findings for `--fail-on` too |
+| `--strict` | off | Count low-confidence findings for `--fail-on` too, and include them in SARIF |
 | `--threshold <0-1>` | `0.5` | Near-duplicate similarity (Jaccard over word 3-grams) |
 | `--max-file-size <kb>` | `512` | Skip larger files |
 | `--local` | off | Also scan your user-level agent folders (`~/.claude`, `~/.agents`, `~/.codex`, `~/.cursor`, `~/.gemini`, `~/.config/skillshare`) |
@@ -151,7 +183,7 @@ flowchart LR
   C --> D[Purpose taxonomy]
   C --> E[MinHash + LSH near-duplicates]
   C --> F[26 rules + confidence]
-  D & E & F --> G[Terminal · JSON · Markdown · HTML]
+  D & E & F --> G[Terminal · JSON · Markdown · HTML · SARIF]
 ```
 
 - **Discovery** skips `node_modules`, build output, trash and worktrees, and finds repo boundaries from `.git`.
@@ -193,7 +225,6 @@ Today it scans local folders, so clone the repos first (for example with `gh rep
 ## Roadmap
 
 - `--github-org <org>` to scan an organisation without cloning by hand
-- SARIF output for GitHub code scanning
 - A `.rookery.yml` policy file (allowed MCP servers, banned patterns, required descriptions)
 - Match local skills against well-known public skills
 - A registry to publish, review, distribute and measure the skills rookery finds
