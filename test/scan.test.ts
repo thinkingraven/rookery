@@ -392,3 +392,9 @@ test('public-scan fixes: plugins, catalogue layouts, skill folders named like bu
   assert.equal(r.stats.reposWithoutArtifacts, 1);
   rmSync(root, { recursive: true, force: true });
 });
+
+test('Markdown report escapes backslashes before pipes, so a cell can\'t break out of the table', async () => {
+  const { renderMarkdown } = await import('../src/report/markdown.js');
+  const md = renderMarkdown({ ...result, findings: [{ ...result.findings[0], title: 'a\\|b' }] });
+  assert.ok(md.includes('a\\\\\\|b'), 'backslash escaped, then the pipe');
+});

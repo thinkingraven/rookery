@@ -2,7 +2,7 @@ import type { ScanResult } from '../types.js';
 import { CATEGORY_LABELS } from '../categories.js';
 import { AGENT_LABEL, MANAGER_LABEL, linkTargets, linkText, provenanceText, sourceGroups } from './sources.js';
 
-const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 
 /** Markdown summary, suitable for CI job summaries and PR comments. */
 export function renderMarkdown(r: ScanResult): string {
