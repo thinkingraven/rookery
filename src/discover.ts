@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync, existsSync, realpathSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync, realpathSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative, sep, basename, dirname, resolve } from 'node:path';
 import type { Agent, ArtifactKind } from './types.js';
@@ -26,6 +26,14 @@ const SKIP_DIRS = new Set([
 ]);
 
 const MAX_DEPTH = 14;
+/** Never walked, even where other build-output names are allowed. */
+const ALWAYS_SKIP = new Set(['node_modules', '.git']);
+/** Inside these folders every child is agent content, so names like build/ or coverage/ are skill names, not output. */
+const CONTENT_PARENTS = new Set(['skills', 'agents', 'commands']);
+const NOT_AGENT_DOCS = new Set(['README.md', 'CHANGELOG.md', 'LICENSE.md', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'SECURITY.md']);
+
+/** A Claude Code plugin folder: where its agents, commands and hook files live (defaults plus declared paths). */
+interface Plugin { agents: string[]; commands: string[]; hooks: string[] }
 
 interface Rule {
   test: (rel: string, base: string) => boolean;
@@ -122,9 +130,11 @@ export function localRoots(home = homedir()): Root[] {
 const toPosix = (p: string) => p.split(sep).join('/');
 
 /** Walk the given roots and return every agent artifact candidate, attributed to its nearest git repo. */
-export function discover(roots: Root[], opts: { worktrees?: boolean } = {}): { candidates: Candidate[]; filesScanned: number; repos: string[]; worktreesSkipped: string[] } {
+export function discover(roots: Root[], opts: { worktrees?: boolean } = {}): { candidates: Candidate[]; filesScanned: number; repos: string[]; allRepos: string[]; worktreesSkipped: string[] } {
   const found: Candidate[] = [];
   const repos = new Set<string>();
+  const allRepos = new Set<string>();
+  const marketplacePlugins = new Set<string>(); // plugin folders a marketplace.json lists by local path
   const worktreesSkipped: string[] = [];
   let filesScanned = 0;
 
@@ -135,13 +145,15 @@ export function discover(roots: Root[], opts: { worktrees?: boolean } = {}): { c
     const rootIsFile = statSync(root).isFile();
     const walkRoot = rootIsFile ? dirname(root) : root;
     const pinned = typeof spec === 'string' ? undefined : resolve(spec.repoRoot);
-    const fallbackRepo = pinned ?? findGitRoot(walkRoot) ?? walkRoot;
+    const gitRoot = pinned ?? findGitRoot(walkRoot);
+    const fallbackRepo = gitRoot ?? walkRoot;
+    if (gitRoot) allRepos.add(gitRoot);
 
-    const addFile = (full: string, repoRoot: string, viaLink: boolean) => {
+    const addFile = (full: string, repoRoot: string, viaLink: boolean, plugin?: Plugin) => {
       if (rootIsFile && full !== root) return;
       filesScanned++;
       const rel = toPosix(relative(repoRoot, full));
-      const hit = classify(rel);
+      const hit = classify(rel) ?? (plugin && classifyPluginFile(full, plugin)) ?? classifyByShape(full, rel);
       if (!hit) return;
       let realPath = full;
       try { realPath = realpathSync(full); } catch { /* keep the logical path */ }
@@ -150,7 +162,7 @@ export function discover(roots: Root[], opts: { worktrees?: boolean } = {}): { c
     };
 
     // `ancestors` holds the real paths of the folders above this one, so a symlink back up the tree can't loop.
-    const visit = (dir: string, repoRoot: string, depth: number, ancestors: Set<string>, viaLink: boolean) => {
+    const visit = (dir: string, repoRoot: string, depth: number, ancestors: Set<string>, viaLink: boolean, inherited?: Plugin) => {
       if (depth > MAX_DEPTH) return;
       let real = dir;
       try { real = realpathSync(dir); } catch { return; }
@@ -163,24 +175,33 @@ export function discover(roots: Root[], opts: { worktrees?: boolean } = {}): { c
       // A linked worktree is another checkout of a repo, not another team's repo: skip it unless asked.
       if (isRepo && depth > 0 && !opts.worktrees && isLinkedWorktree(entries, dir)) { worktreesSkipped.push(dir); return; }
       const currentRepo = isRepo ? dir : repoRoot;
+      if (isRepo) allRepos.add(dir);
       const inSkillshare = SS_ROOT.test(toPosix(relative(repoRoot, dir)));
+      // A .claude-plugin/plugin.json (or a marketplace listing this folder) makes it a plugin root for everything below.
+      const hasPluginDir = entries.some((e) => e.name === '.claude-plugin');
+      if (hasPluginDir) for (const src of marketplaceSources(dir)) marketplacePlugins.add(src);
+      const manifest = hasPluginDir ? readJson(join(dir, '.claude-plugin', 'plugin.json')) : null;
+      const plugin = manifest ? pluginFolders(dir, manifest) : marketplacePlugins.has(dir) ? pluginFolders(dir, {}) : inherited;
+      const contentParent = CONTENT_PARENTS.has(basename(dir));
       for (const e of entries) {
         const full = join(dir, e.name);
         if (e.isDirectory()) {
-          if (SKIP_DIRS.has(e.name) || (inSkillshare && SS_SKIP.has(e.name))) continue;
-          visit(full, currentRepo, depth + 1, chain, viaLink);
+          // Build-output names are skipped, except a skill/agent folder with that name, or a repo the user pointed us at.
+          const keep = !ALWAYS_SKIP.has(e.name) && (contentParent || (depth === 0 && existsSync(join(full, '.git'))));
+          if ((SKIP_DIRS.has(e.name) && !keep) || (inSkillshare && SS_SKIP.has(e.name))) continue;
+          visit(full, currentRepo, depth + 1, chain, viaLink, plugin);
         } else if (e.isFile()) {
-          addFile(full, currentRepo, viaLink);
+          addFile(full, currentRepo, viaLink, plugin);
         } else if (e.isSymbolicLink()) {
           // Skill managers (skillshare, npx skills) install by symlink. Follow links inside agent folders
           // when they point at agent content; ignore broken links.
           let st;
           try { st = statSync(full); } catch { continue; }
-          if (st.isFile()) addFile(full, currentRepo, true);
+          if (st.isFile()) addFile(full, currentRepo, true, plugin);
           else if (st.isDirectory() && !SKIP_DIRS.has(e.name) && inAgentArea(dir)) {
             let target = full;
             try { target = realpathSync(full); } catch { continue; }
-            if (inAgentArea(target)) visit(full, currentRepo, depth + 1, chain, true);
+            if (inAgentArea(target)) visit(full, currentRepo, depth + 1, chain, true, plugin);
           }
         }
       }
@@ -200,7 +221,70 @@ export function discover(roots: Root[], opts: { worktrees?: boolean } = {}): { c
     primary.links = group.filter((c) => c !== primary).map((c) => ({ repoRoot: c.repoRoot, relPath: c.relPath, agent: c.agent }));
     candidates.push(primary);
   }
-  return { candidates, filesScanned, repos: [...repos].sort(), worktreesSkipped };
+  return { candidates, filesScanned, repos: [...repos].sort(), allRepos: [...allRepos].sort(), worktreesSkipped };
+}
+
+function readJson(path: string): any {
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
+}
+
+const asList = (v: unknown): string[] => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+
+/** Default component folders of a plugin, plus the agents/commands/hooks paths its plugin.json declares. */
+function pluginFolders(root: string, manifest: any): Plugin {
+  const at = (p: string) => resolve(root, p);
+  return {
+    agents: [at('agents'), ...asList(manifest?.agents).map(at)],
+    commands: [at('commands'), ...asList(manifest?.commands).map(at)],
+    hooks: [at('hooks/hooks.json'), ...asList(manifest?.hooks).map(at)],
+  };
+}
+
+/** Plugin folders a marketplace.json lists by local path (they may have no plugin.json of their own). */
+function marketplaceSources(dir: string): string[] {
+  const m = readJson(join(dir, '.claude-plugin', 'marketplace.json'));
+  if (!m || !Array.isArray(m.plugins)) return [];
+  const base = typeof m.metadata?.pluginRoot === 'string' ? resolve(dir, m.metadata.pluginRoot) : dir;
+  return m.plugins
+    .map((p: any) => (typeof p?.source === 'string' ? p.source : null))
+    .filter((src: string | null): src is string => !!src && !/^[a-z]+:\/\//i.test(src))
+    .map((src: string) => resolve(src.startsWith('.') ? dir : base, src));
+}
+
+const within = (file: string, places: string[]) => places.some((p) => file === p || file.startsWith(p + sep));
+
+/** Agents, commands and hook files inside a Claude Code plugin. */
+function classifyPluginFile(full: string, plugin: Plugin): { agent: Agent; kind: ArtifactKind } | null {
+  if (plugin.hooks.includes(full)) return { agent: 'claude-code', kind: 'settings' };
+  if (!full.endsWith('.md') || NOT_AGENT_DOCS.has(basename(full))) return null;
+  if (within(full, plugin.agents)) return { agent: 'claude-code', kind: 'subagent' };
+  if (within(full, plugin.commands)) return { agent: 'claude-code', kind: 'command' };
+  return null;
+}
+
+/** Frontmatter keys from the first 4 KB of a file. */
+function frontmatterKeys(path: string): Set<string> {
+  const buf = Buffer.alloc(4096);
+  let n = 0;
+  try { const fd = openSync(path, 'r'); try { n = readSync(fd, buf, 0, buf.length, 0); } finally { closeSync(fd); } } catch { return new Set(); }
+  const m = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(buf.subarray(0, n).toString('utf8'));
+  return new Set(m ? [...m[1].matchAll(/^([\w-]+)\s*:/gm)].map((k) => k[1]) : []);
+}
+
+/**
+ * Catalogues publish rules, subagents and commands outside the folders an agent loads them from
+ * (rules/*.mdc, agents/*.md). Recognise them by frontmatter shape instead of path.
+ */
+function classifyByShape(full: string, rel: string): { agent: Agent; kind: ArtifactKind } | null {
+  const base = basename(rel);
+  const mdc = base.endsWith('.mdc');
+  if ((!mdc && !base.endsWith('.md')) || NOT_AGENT_DOCS.has(base) || base === 'SKILL.md') return null;
+  const keys = frontmatterKeys(full);
+  if (!keys.size) return null;
+  if (mdc) return keys.has('globs') || keys.has('alwaysApply') ? { agent: 'cursor', kind: 'rules' } : null;
+  if (keys.has('name') && keys.has('description') && (keys.has('tools') || keys.has('model'))) return { agent: 'claude-code', kind: 'subagent' };
+  if (keys.has('argument-hint') || (keys.has('description') && keys.has('allowed-tools') && !keys.has('name'))) return { agent: 'claude-code', kind: 'command' };
+  return null;
 }
 
 /** True when `.git` is a file pointing into another repo's .git/worktrees/ (not a submodule). */

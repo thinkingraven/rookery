@@ -2,13 +2,13 @@ import type { ScanResult } from '../types.js';
 import { CATEGORY_LABELS } from '../categories.js';
 import { AGENT_LABEL, MANAGER_LABEL, linkTargets, linkText, provenanceText, sourceGroups } from './sources.js';
 
-const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 
 /** Markdown summary, suitable for CI job summaries and PR comments. */
 export function renderMarkdown(r: ScanResult): string {
   const s = r.stats.findingsBySeverity;
   const lines: string[] = [];
-  lines.push(`# Rookery report`, '', `Scanned **${r.repos.length}** repo(s) · **${r.stats.artifacts}** agent artifacts · ${new Date(r.scannedAt).toUTCString()} ${r.stats.worktreesSkipped ? ` · ${r.stats.worktreesSkipped} git worktree(s) skipped` : ''} · rookery v${r.tool.version}`, '');
+  lines.push(`# Rookery report`, '', `Scanned **${r.repos.length}** repo(s)${r.stats.reposWithoutArtifacts ? ` (+${r.stats.reposWithoutArtifacts} with no agent files)` : ''} · **${r.stats.artifacts}** agent artifacts · ${new Date(r.scannedAt).toUTCString()} ${r.stats.worktreesSkipped ? ` · ${r.stats.worktreesSkipped} git worktree(s) skipped` : ''} · rookery v${r.tool.version}`, '');
   lines.push(`| Critical | High | Medium | Low | Duplicate clusters |`, `|---|---|---|---|---|`, `| ${s.critical} | ${s.high} | ${s.medium} | ${s.low} | ${r.clusters.filter((c) => !c.syncedFrom).length} |`, '');
 
   if (r.categories.length) {

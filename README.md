@@ -47,7 +47,7 @@ Or install it: `npm install -g @thinkingraven/rookery`, then run `rookery scan .
 | **What teams keep building** | Artifacts grouped by purpose (code review, testing, commits, deployment…) and how many repos have one. A tall bar across many repos is your best candidate for one shared, reviewed skill. |
 | **Near-duplicates** | Copy-pasted and lightly edited skills clustered across repos *and* across agents. A Cursor rule, a Claude skill and a Copilot prompt can be the same thing. |
 | **Where skills come from** | Skills installed by [skillshare](https://github.com/runkids/skillshare) or `npx skills`: the source repo and commit, which tools each one is linked into, and which ones were **edited since install**. Symlinks and synced copies count once, not as duplicates. |
-| **Security findings** | 26 static checks on skill text, bundled scripts and agent config: secrets, exfiltration, prompt injection, hidden Unicode, harness overrides, piped installs, risky hooks, broad permissions and MCP servers. |
+| **Security findings** | 27 static checks on skill text, bundled scripts and agent config: secrets, exfiltration, prompt injection, hidden Unicode, harness overrides, piped installs, risky hooks, broad permissions and MCP servers. |
 
 Add `--html report.html` for a self-contained report you can send to your team:
 
@@ -60,6 +60,7 @@ Add `--html report.html` for a self-contained report you can send to your team:
 | Agent | Files |
 |---|---|
 | **Claude Code** | `.claude/skills/*/SKILL.md`, `.claude/commands/`, `.claude/agents/`, `.claude/settings*.json` (hooks, permissions), `CLAUDE.md`, `.mcp.json`, `.claude-plugin/` |
+| **Claude Code plugins** | every folder with `.claude-plugin/plugin.json` or listed in a `marketplace.json`: its `agents/`, `commands/`, `hooks/hooks.json`, skills and MCP servers, plus agent and command paths the manifest declares |
 | **Codex** | `AGENTS.md`, `.codex/config.toml` (MCP servers), `.codex/prompts/`, `.codex/skills/` |
 | **Cursor** | `.cursor/rules/*.mdc`, `.cursorrules`, `.cursor/commands/`, `.cursor/skills/`, `.cursor/mcp.json` |
 | **GitHub Copilot** | `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, `.github/chatmodes/`, `.github/agents/`, `.vscode/mcp.json` |
@@ -68,8 +69,9 @@ Add `--html report.html` for a self-contained report you can send to your team:
 | **skillshare** | `~/.config/skillshare/` and a project's `.skillshare/` (or `skillshare/`): skills (including tracked repos), agents, extras (rules, commands), and MCP servers in `config.yaml` / `mcp.yaml`. Install records (`.metadata.json`, `skills.lock.json`, `.skillshare-manifest.json`) give each skill's source, commit and local edits |
 | **npx skills** | `.agents/skills/` with `.agents/.skill-lock.json` for install sources |
 | **Agent Skills** | any `SKILL.md` folder, including the scripts and references bundled next to it |
+| **Catalogues** | collections that publish files outside the folders an agent loads them from are recognised by frontmatter: `.mdc` files with `globs`/`alwaysApply` (Cursor rules), `.md` files with `name`, `description` and `tools` or `model` (subagents), and `.md` files with `argument-hint` (commands) |
 
-Point it at one repo or a folder of many. Each nested `.git` counts as its own repo. Linked git worktrees (such as Claude Code's `.claude/worktrees/`) are skipped, so branch checkouts don't show up as duplicates; pass `--worktrees` to include them.
+Point it at one repo or a folder of many. Each nested `.git` counts as its own repo, and repos with no agent files are counted too (a catalogue layout is the usual reason). Linked git worktrees (such as Claude Code's `.claude/worktrees/`) are skipped, so branch checkouts don't show up as duplicates; pass `--worktrees` to include them.
 
 Skill managers install by symlink, so rookery follows symlinks inside agent folders (with a loop guard) and reports each real skill once, listing every tool it's linked into. `--local` adds your user-level folders: `~/.claude`, `~/.agents`, `~/.codex`, `~/.cursor`, `~/.gemini` and `~/.config/skillshare`.
 
@@ -78,7 +80,7 @@ Skill managers install by symlink, so rookery follows symlinks inside agent fold
 | Family | Rules | Examples |
 |---|---|---|
 | Secrets | `RK-SEC-001…003` | private keys, AWS/GitHub/Slack/OpenAI/Anthropic/Google/GitLab tokens, hard-coded secrets |
-| Exfiltration | `RK-EXF-001…003` | `env \| curl`, webhook and paste services, reading `~/.aws/credentials` |
+| Exfiltration | `RK-EXF-001…004` | `env \| curl`, webhook and paste services, reading `~/.aws/credentials`, sweeping password managers, the keychain, browser profiles or other projects' `.env` files |
 | Prompt injection | `RK-INJ-001…004` | "ignore previous instructions", zero-width and bidi characters, instructions in HTML comments, "the user must never see…" |
 | Unsafe execution | `RK-EXE-001…005` | `curl \| sh`, `rm -rf ~`, base64-to-shell, `--dangerously-skip-permissions`, `sudo` |
 | Supply chain | `RK-SUP-001…002` | download-and-run binaries, unpinned global installs |
@@ -93,7 +95,7 @@ Security skills and docs are full of attack examples. Rookery marks a finding **
 
 Secrets are masked in every report (`phc_…mpx`), and the JSON report never includes file contents.
 
-To accept a reviewed line, add `rookery-ignore` or `rookery-ignore RK-EXE-001` on the line or the line above. Markers from `gitleaks`, `trufflehog`, `nosec` and `noqa` are honoured too.
+To accept a reviewed line, add `rookery-ignore` or `rookery-ignore RK-EXE-001` on the line or the line above. Markers from `gitleaks`, `trufflehog`, `nosec`, `noqa` and `security-allowlist` are honoured too.
 
 ## Use it in CI
 
@@ -182,11 +184,11 @@ flowchart LR
   B --> C[Parse frontmatter, settings, hooks, MCP, bundled scripts]
   C --> D[Purpose taxonomy]
   C --> E[MinHash + LSH near-duplicates]
-  C --> F[26 rules + confidence]
+  C --> F[27 rules + confidence]
   D & E & F --> G[Terminal · JSON · Markdown · HTML · SARIF]
 ```
 
-- **Discovery** skips `node_modules`, build output, trash and worktrees, and finds repo boundaries from `.git`.
+- **Discovery** skips `node_modules`, build output, trash and worktrees, and finds repo boundaries from `.git`. A skill or agent folder named like build output (`skills/build/`, `skills/coverage/`) is still scanned.
 - **Duplicates** hash word 3-grams into MinHash signatures, bucket them with locality-sensitive hashing, and confirm every candidate pair with exact Jaccard similarity, so it stays fast across thousands of files.
 - **Rules** are regular expressions and structured checks. Nothing is executed.
 

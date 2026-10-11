@@ -59,7 +59,7 @@ details>summary{cursor:pointer;font-weight:600;color:var(--ink);margin:0 0 14px;
 <header class="hero"><div class="wrap">
   <div class="kicker">Rookery report · ${e(new Date(r.scannedAt).toUTCString())}</div>
   <h1>Your agent skills, <span style="font-weight:400">at a glance</span><span class="dot">.</span></h1>
-  <p>${r.repos.length} repo${r.repos.length === 1 ? '' : 's'} · ${r.stats.filesScanned.toLocaleString('en-US')} files scanned${r.stats.worktreesSkipped ? ` · ${r.stats.worktreesSkipped} git worktree${r.stats.worktreesSkipped === 1 ? '' : 's'} skipped` : ''} · ~${r.stats.totalTokens.toLocaleString('en-US')} tokens of agent context · rookery v${e(r.tool.version)}</p>
+  <p>${r.repos.length} repo${r.repos.length === 1 ? '' : 's'}${r.stats.reposWithoutArtifacts ? ` (+${r.stats.reposWithoutArtifacts} with no agent files)` : ''} · ${r.stats.filesScanned.toLocaleString('en-US')} files scanned${r.stats.worktreesSkipped ? ` · ${r.stats.worktreesSkipped} git worktree${r.stats.worktreesSkipped === 1 ? '' : 's'} skipped` : ''} · ~${r.stats.totalTokens.toLocaleString('en-US')} tokens of agent context · rookery v${e(r.tool.version)}</p>
   <div class="tiles">${tiles.map(([k, v]) => `<div class="tile ${String(k).toLowerCase()}"><b>${v}</b><span>${k}</span></div>`).join('')}</div>
 </div></header>
 <main>

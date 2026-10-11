@@ -171,7 +171,8 @@ export function parseCandidate(c: Candidate, maxFileBytes: number): Artifact | n
     const fm = splitFrontmatter(text);
     frontmatter = fm.data;
     body = fm.body;
-    allowedTools = toList(frontmatter['allowed-tools'] ?? frontmatter['allowed_tools'] ?? frontmatter['tools']);
+    // `allowed-tools` pre-approves tools. A subagent's `tools:` only restricts which tools it has, so it isn't one.
+    allowedTools = toList(frontmatter['allowed-tools'] ?? frontmatter['allowed_tools']);
   }
 
   const name = str(frontmatter.name).trim() || (c.kind === 'skill' ? '' : firstHeading(body)) || defaultName(c);
