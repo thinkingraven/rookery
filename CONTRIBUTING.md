@@ -46,6 +46,12 @@ Add path patterns to `RULES` in `src/discover.ts`, a case to the `classify` test
 - No new runtime dependencies without discussing it in an issue first.
 - Rookery must never execute scanned files or make network calls.
 
+## Releasing
+
+1. In a PR, bump the version (`npm version <x.y.z> --no-git-tag-version`) and move the changelog's "Unreleased" notes under it.
+2. Once it's merged, publish a GitHub release tagged `vX.Y.Z` on that commit. `.github/workflows/release.yml` runs the tests and publishes to npm with provenance; the tag must match `package.json`.
+3. Move the major tag the GitHub Action uses: `git tag -f v0 vX.Y.Z && git push -f origin v0` (owners only, since release tags are protected).
+
 ## Reporting false positives
 
 Use the [false positive form](https://github.com/thinkingraven/rookery/issues/new?template=false-positive.yml). Replace real secrets, hosts and names with placeholders.
