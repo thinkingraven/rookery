@@ -2,7 +2,7 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
-## Unreleased
+## 0.2.0 — 2026-10-11
 
 - **skillshare support**: scans `~/.config/skillshare/` and project `.skillshare/` (or `skillshare/`) folders: skills, tracked skill repos, agents, extras, and MCP servers in `config.yaml` / `mcp.yaml`.
 - **Where skills come from**: install source, commit and "edited since install" from skillshare's metadata and lock files, and the source repo from `npx skills`' lock file. Shown in every report.
