@@ -5,7 +5,7 @@ const data = JSON.parse(readFileSync(new URL('../docs/agent-capabilities.json', 
 const agents = Object.entries(data.agents);
 const MARK = { yes: '✅ yes', partial: '🟡 partial', no: '❌ no', unknown: '❔ unknown' };
 
-const cell = (s) => String(s).replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
+const cell = (s) => String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ');
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
 
 /** `how` and `limits` are a string, a list, or one entry per product surface. */
