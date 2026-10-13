@@ -9,6 +9,7 @@ import { classify } from '../src/discover.js';
 import { categorize } from '../src/categories.js';
 import { renderSarif } from '../src/report/sarif.js';
 import { ALL_RULES } from '../src/rules.js';
+import { POLICY_RULES } from '../src/policy/policy.js';
 import { makeOrg, makeEmptyRepo } from './fixtures.js';
 
 const CLI = fileURLToPath(new URL('../src/cli.js', import.meta.url));
@@ -280,7 +281,7 @@ test('SARIF: rules with code scanning severities, repo-relative locations and st
   const run = JSON.parse(renderSarif(result, { base: org })).runs[0];
   const rule = (id: string) => run.tool.driver.rules.find((r: { id: string }) => r.id === id);
   assert.equal(run.tool.driver.name, 'rookery');
-  assert.deepEqual(run.tool.driver.rules.map((r: { id: string }) => r.id), ALL_RULES.map((r) => r.id));
+  assert.deepEqual(run.tool.driver.rules.map((r: { id: string }) => r.id), [...ALL_RULES, ...POLICY_RULES].map((r) => r.id));
   assert.equal(rule('RK-SEC-001').properties['security-severity'], '9.5');
   assert.deepEqual(rule('RK-SEC-001').properties.tags, ['security', 'ai-agents']);
   assert.ok(!('security-severity' in rule('RK-QLT-001').properties), 'quality rules are not security alerts');

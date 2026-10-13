@@ -1,4 +1,4 @@
-import type { ScanResult, Severity } from '../types.js';
+import type { PolicyResult, ScanResult, Severity } from '../types.js';
 import { CATEGORY_LABELS } from '../categories.js';
 import { AGENT_LABEL, MANAGER_LABEL, linkTargets, linkText, provenanceText, shortSource, sourceGroups } from './sources.js';
 
@@ -23,6 +23,7 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
 
   if (!r.artifacts.length) {
     out.push('', `No agent skills, rules or configs found. Rookery looks for ${dim('.claude/, AGENTS.md, .cursor/, .github/copilot-instructions.md, SKILL.md, .mcp.json')} and more.`);
+    if (r.policy) out.push(...policySection(r.policy, { bold, dim, red, yellow, green, amber }, o.verbose));
     return out.join('\n') + '\n';
   }
 
@@ -86,8 +87,14 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
   if (visible.length > limit) out.push(dim(`  … ${visible.length - limit} more (use --verbose or --html)`));
   if (!o.verbose && unsure) out.push(dim(`  ${unsure} low-confidence finding${unsure === 1 ? '' : 's'} hidden: patterns inside tests, examples, security docs or scanner code (use --verbose).`));
 
+  if (r.policy) out.push(...policySection(r.policy, { bold, dim, red, yellow, green, amber }, o.verbose));
+
   h('NEXT STEPS');
   const steps: string[] = [];
+  const pol = r.policy;
+  if (pol && !pol.source) steps.push(`Run ${bold('rookery policy init')} to turn these warnings into a policy this repo enforces.`);
+  const polErrors = pol?.violations.filter((v) => v.level === 'error').length ?? 0;
+  if (polErrors) steps.push(`Fix ${red(polErrors + ' policy error' + (polErrors === 1 ? '' : 's'))}, or add reviewed exceptions to ${pol!.source ? 'the policy' : '.rookery.yml'}.`);
   const sc = sure.filter((f) => f.severity === 'critical').length, sh = sure.filter((f) => f.severity === 'high').length;
   if (sc) steps.push(`Fix ${redB(sc + ' critical')} finding${sc === 1 ? '' : 's'} first: likely secrets or exfiltration.`);
   if (dupes.length) steps.push(`Consolidate ${dupes.length} duplicate cluster${dupes.length === 1 ? '' : 's'} into shared skills (${dupeArtifacts} → ${dupes.length}).`);
@@ -95,8 +102,44 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
   if (sh) steps.push(`Review ${red(sh + ' high')} finding${sh === 1 ? '' : 's'}: permission bypasses, piped installs, risky hooks.`);
   const mcp = r.findings.filter((f) => f.ruleId === 'RK-MCP-001').length;
   if (mcp) steps.push(`Pin versions for ${mcp} MCP server${mcp === 1 ? '' : 's'}.`);
-  if (!steps.length) steps.push('Looks clean. Run rookery in CI with --fail-on high to keep it that way.');
+  if (!steps.length) steps.push(pol ? 'Passes the policy. Run rookery check in CI to keep it that way.' : 'Looks clean. Run rookery in CI with --fail-on high to keep it that way.');
   for (const st of steps) out.push(`  ${amber('→')} ${st}`);
   out.push(o.htmlPath ? `  ${amber('→')} Full report: ${bold(o.htmlPath)}` : dim('  Tip: add --html rookery-report.html for a shareable report.'));
   return out.join('\n') + '\n';
+}
+
+type Paint = Record<'bold' | 'dim' | 'red' | 'yellow' | 'green' | 'amber', (s: string | number) => string>;
+
+/** The POLICY section of `rookery check`. */
+function policySection(p: PolicyResult, c: Paint, verbose: boolean): string[] {
+  const out: string[] = [''];
+  const errors = p.violations.filter((v) => v.level === 'error');
+  const warnings = p.violations.filter((v) => v.level === 'warning');
+  const counts = [errors.length && c.red(`${errors.length} error${errors.length === 1 ? '' : 's'}`), warnings.length && c.yellow(`${warnings.length} warning${warnings.length === 1 ? '' : 's'}`)].filter(Boolean).join(c.dim(' · ')) || c.green('no violations');
+  const where = p.source ? `${p.source.split('/').pop()} · extends ${p.preset}` : `no .rookery.yml · what the ${p.preset} preset would flag, as warnings only`;
+  out.push(`${c.bold('POLICY')}  ${c.dim(where)}  ${counts}`);
+
+  const groups = new Map<string, typeof p.violations>();
+  for (const v of p.violations) groups.set(v.ruleId, [...(groups.get(v.ruleId) ?? []), v]);
+  for (const [id, list] of groups) {
+    const v0 = list[0];
+    const mark = v0.level === 'error' ? c.red('✗') : c.yellow('!');
+    out.push(`  ${mark} ${c.dim(id)}  ${v0.title}  ${c.dim(`(${v0.key})`)}  ${c.dim(`${list.length} place${list.length === 1 ? '' : 's'}`)}`);
+    for (const v of list.slice(0, verbose ? 1000 : 5)) out.push(`       ${v.repo}/${v.relPath}${c.dim(':' + v.line)}  ${c.dim(v.snippet)}`);
+    if (list.length > 5 && !verbose) out.push(c.dim(`       … ${list.length - 5} more (use --verbose)`));
+  }
+  if (p.excepted.length || p.exceptions.length) {
+    const st = (k: string) => p.exceptions.filter((e) => e.status === k);
+    out.push(`  ${c.dim('Exceptions:')} ${[`${p.excepted.length} violation${p.excepted.length === 1 ? '' : 's'} excepted`, st('unused').length && c.yellow(`${st('unused').length} unused`), st('expired').length && c.red(`${st('expired').length} expired`)].filter(Boolean).join(c.dim(' · '))}`);
+    for (const e of [...st('expired'), ...st('unused')]) out.push(`       ${e.status === 'expired' ? c.red('expired') : c.yellow('unused')}  ${e.path} ${c.dim(`[${e.rules.join(', ')}]${e.expires ? ` expires ${e.expires}` : ''}`)}`);
+  }
+  if (p.failOn !== 'none') out.push(`  ${p.findingsAtOrAbove ? c.red('✗') : c.green('✓')} ${p.findingsAtOrAbove} scan finding${p.findingsAtOrAbove === 1 ? '' : 's'} at or above ${p.failOn} ${c.dim('(fail_on)')}`);
+  if (p.coverage.length) {
+    out.push(`  ${c.dim('What these agents can enforce themselves (docs/agent-capabilities.md):')}`);
+    const width = Math.max(...p.coverage.map((x) => x.key.length));
+    const mark: Record<string, string> = { yes: c.green('yes'), partial: c.yellow('partial'), no: c.red('no'), unknown: c.dim('unknown') };
+    for (const x of p.coverage) out.push(`    ${x.key.padEnd(width)}  ${x.agents.map((a) => `${a.name} ${mark[a.support] ?? a.support}`).join(c.dim(' · '))}`);
+  }
+  out.push(`  ${p.enforced ? (p.passed ? c.green('PASS') : c.red('FAIL')) : c.dim('NOT ENFORCED')}  ${c.dim(p.enforced ? (p.passed ? 'the policy is met' : 'exit code 1') : 'no policy file, so this run always exits 0')}`);
+  return out;
 }

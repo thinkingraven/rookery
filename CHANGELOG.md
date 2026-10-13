@@ -2,6 +2,24 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## 0.4.0 — 2026-10-14
+
+- **Policy: `rookery check` and `.rookery.yml`.**
+  - One file says what agents may do in a repo, and `check` fails CI when the agent files break it.
+  - **Six policy rules:**
+    - approval bypasses (`RK-POL-001`);
+    - any-command allow-lists (`RK-POL-002`);
+    - unpinned MCP servers (`RK-POL-003`) and MCP servers not on an allow-list (`RK-POL-004`);
+    - network-calling hooks (`RK-POL-005`);
+    - reads of credentials or `files.never_read` paths (`RK-POL-006`).
+  - **Presets and exceptions:** `strict`, `balanced` and `solo` presets. Exceptions need a reason and can expire, and they can also accept scan findings (`rules: [RK-EXE-001]`). Unused and expired exceptions are reported.
+  - **Per-agent enforceability:** for each setting, `check` prints whether each agent in the repo can enforce the rule itself, from `docs/agent-capabilities.md`.
+  - **Without a `.rookery.yml`:** `check` shows what `balanced` would flag, as warnings only, and exits 0.
+  - **Output:** terminal, Markdown, JSON and SARIF (`RK-POL-*` alerts in code scanning).
+- **`rookery policy init`** writes a commented starter `.rookery.yml`.
+- **GitHub Action:** a new `policy` input. The Action runs `check` automatically when the repo has a `.rookery.yml`.
+- **Capability matrix:** `docs/agent-capabilities.md` compares seven agents on 16 controls.
+
 ## 0.3.0 — 2026-10-11
 
 Fixes from scanning 38 popular public skill repositories (14,245 agent files), where every high and critical alert was read by hand.

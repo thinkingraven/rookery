@@ -18,6 +18,9 @@ inputs:
   sarif:
     description: Also write SARIF 2.1.0 to this path (upload it with github/codeql-action/upload-sarif to see findings in code scanning).
     default: ''
+  policy:
+    description: Path to a .rookery.yml policy. When set, or when .rookery.yml exists at the repo root, the action runs `rookery check` and the policy's fail_on replaces the fail-on input.
+    default: ''
   args:
     description: Extra CLI options, for example "--strict --threshold 0.6".
     default: ''
@@ -38,13 +41,19 @@ runs:
         ROOKERY_FAIL_ON: ${{ inputs.fail-on }}
         ROOKERY_HTML: ${{ inputs.html }}
         ROOKERY_SARIF: ${{ inputs.sarif }}
+        ROOKERY_POLICY: ${{ inputs.policy }}
         ROOKERY_ARGS: ${{ inputs.args }}
         FORCE_COLOR: '1'
       # Inputs arrive through env, never interpolated into the script.
       run: |
         set -f
-        args=(scan $ROOKERY_PATH --md "$GITHUB_STEP_SUMMARY")
-        if [ -n "$ROOKERY_FAIL_ON" ]; then args+=(--fail-on "$ROOKERY_FAIL_ON"); fi
+        if [ -n "$ROOKERY_POLICY" ] || [ -f .rookery.yml ] || [ -f .rookery.yaml ]; then
+          args=(check $ROOKERY_PATH --md "$GITHUB_STEP_SUMMARY")
+          if [ -n "$ROOKERY_POLICY" ]; then args+=(--policy "$ROOKERY_POLICY"); fi
+        else
+          args=(scan $ROOKERY_PATH --md "$GITHUB_STEP_SUMMARY")
+          if [ -n "$ROOKERY_FAIL_ON" ]; then args+=(--fail-on "$ROOKERY_FAIL_ON"); fi
+        fi
         if [ -n "$ROOKERY_HTML" ]; then args+=(--html "$ROOKERY_HTML"); fi
         if [ -n "$ROOKERY_SARIF" ]; then args+=(--sarif "$ROOKERY_SARIF"); fi
         node "$ROOKERY_CLI" "${args[@]}" $ROOKERY_ARGS

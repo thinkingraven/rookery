@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ALL_RULES } from '../rules.js';
+import { POLICY_RULES } from '../policy/policy.js';
 import type { Finding, ScanResult, Severity } from '../types.js';
 
 const RULES_DOC = 'https://github.com/thinkingraven/rookery/blob/main/docs/rules.md';
@@ -28,7 +29,9 @@ function location(base: string, repoRoot: string, relPath: string): { uri: strin
 export function renderSarif(r: ScanResult, opts: { strict?: boolean; base?: string } = {}): string {
   const base = opts.base ?? process.cwd();
   const roots = new Map(r.artifacts.map((a) => [a.id + '\0' + a.repo, a.repoRoot]));
-  const ruleIndex = new Map(ALL_RULES.map((rule, i) => [rule.id, i]));
+  const ruleIndex = new Map([...ALL_RULES, ...POLICY_RULES].map((rule, i) => [rule.id, i]));
+  // Repo roots by repo name, for policy violations (they carry a repo name, not an artifact id).
+  const repoRoots = new Map(r.artifacts.map((a) => [a.repo, a.repoRoot]));
   const seen = new Map<string, number>();
 
   const result = (f: Finding) => {
@@ -58,7 +61,7 @@ export function renderSarif(r: ScanResult, opts: { strict?: boolean; base?: stri
           version: r.tool.version,
           semanticVersion: r.tool.version,
           informationUri: 'https://github.com/thinkingraven/rookery',
-          rules: ALL_RULES.map((rule) => {
+          rules: [...ALL_RULES.map((rule) => {
             const quality = rule.id.startsWith('RK-QLT');
             const helpUri = `${RULES_DOC}#${rule.id.toLowerCase()}`;
             return {
@@ -76,9 +79,39 @@ export function renderSarif(r: ScanResult, opts: { strict?: boolean; base?: stri
               },
             };
           }),
+          ...POLICY_RULES.map((rule) => {
+            const helpUri = 'https://github.com/thinkingraven/rookery/blob/main/docs/policy.md#' + rule.key.replace('.', '');
+            return {
+              id: rule.id,
+              name: pascal(rule.title),
+              shortDescription: { text: rule.title },
+              fullDescription: { text: rule.why },
+              help: { text: `${rule.why}\n\nFix: ${rule.remediation}`, markdown: `${rule.why}\n\n**Fix:** ${rule.remediation}\n\n[Policy reference](${helpUri})` },
+              helpUri,
+              defaultConfiguration: { level: 'error' },
+              properties: { tags: ['policy', 'ai-agents'], precision: 'high' },
+            };
+          })],
         },
       },
-      results: r.findings.filter((f) => opts.strict || f.confidence === 'high').map(result),
+      results: [
+        ...r.findings.filter((f) => opts.strict || f.confidence === 'high').map(result),
+        ...(r.policy?.violations ?? []).map((v) => {
+          const loc = location(base, repoRoots.get(v.repo) ?? base, v.relPath);
+          const key = `${v.ruleId}|${loc.uri}|${v.snippet}`;
+          const n = (seen.get(key) ?? 0) + 1;
+          seen.set(key, n);
+          return {
+            ruleId: v.ruleId,
+            ruleIndex: ruleIndex.get(v.ruleId),
+            level: v.level === 'error' ? 'error' : 'warning',
+            message: { text: `${v.title} (${v.key}). ${v.message}` },
+            locations: [{ physicalLocation: { artifactLocation: loc, region: { startLine: Math.max(1, v.line) } } }],
+            partialFingerprints: { 'rookeryFinding/v1': createHash('sha256').update(`${key}|${n}`).digest('hex').slice(0, 32) },
+            properties: { repo: v.repo, policyKey: v.key, ...(v.fromFinding ? { fromFinding: v.fromFinding } : {}) },
+          };
+        }),
+      ],
       columnKind: 'utf16CodeUnits',
     }],
   };
