@@ -2,6 +2,20 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## 0.5.0 — 2026-10-14
+
+- **`rookery policy apply`.** Writes `.rookery.yml` into each agent's own config, for the agents found in the repo or listed in `agents:`.
+  - **Claude Code:** `.claude/settings.json`, with the bypass lock, deny rules and MCP allow-list.
+  - **Codex:** `.codex/rules/rookery.rules`, with forbidden command prefixes.
+  - **Gemini CLI:** `.gemini/settings.json` (yolo off, MCP allow-list, tool excludes) and `.geminiignore`.
+  - **Cursor:** `.cursor/cli.json` permissions and `.cursorignore`.
+  - **Windsurf:** `.devinignore`.
+  - **Dry run by default:** shows a diff per file; `--write` applies it.
+  - **Owned and additive:** `.rookery/applied.json` records what rookery added, so later runs update or remove only those values. Hand-written values are never overwritten or removed, and conflicts are reported.
+- **`.rookery/ADMIN.md`.** The settings only an admin can make binding, with exact snippets per agent: managed settings, Codex `requirements.toml`, Gemini system settings and admin policy, Cursor and Windsurf team settings, Copilot enterprise managed settings.
+- **New policy settings:** `shell.deny` (command prefixes) and `drift`.
+- **`RK-POL-007`:** once `apply` has been used, `check` reports agent configs that are out of date with the policy.
+
 ## 0.4.0 — 2026-10-14
 
 - **Policy: `rookery check` and `.rookery.yml`.**
