@@ -21,6 +21,7 @@ approvals:
   bypass: forbid           # forbid | warn | allow
 shell:
   any_command: forbid
+  deny: ["rm -rf", "git push --force"]   # written into each agent's deny rules by `policy apply`
 mcp:
   unpinned: forbid
   unlisted: allow
@@ -30,6 +31,8 @@ hooks:
 files:
   read_secrets: forbid
   never_read: ["~/.ssh/**", "~/.aws/**", "~/.config/gh/**", "**/.env"]
+
+drift: warn                # agent configs out of date with the policy, once `policy apply` is used
 
 agents: [claude-code, cursor]   # optional: only judge these agents' files
 
@@ -59,6 +62,8 @@ Unknown keys and invalid values are errors, with exit code 2, so a typo can neve
 | `hooks.network` | forbid | warn | warn |
 | `files.read_secrets` | forbid | forbid | warn |
 | `files.never_read` | `~/.ssh/**`, `~/.aws/**`, `~/.config/gh/**`, `**/.env` | same | same |
+| `shell.deny` | none | none | none |
+| `drift` | forbid | warn | allow |
 
 `strict` forbids every MCP server that isn't in `mcp.allow`, so list the ones you use.
 
@@ -97,6 +102,10 @@ Unknown keys and invalid values are errors, with exit code 2, so a typo can neve
 
 Public keys (`*.pub`) are never treated as secrets.
 
+### `drift`
+
+**RK-POL-007.** After `rookery policy apply --write`, the agent configs it wrote must keep matching the policy. `check` reports any file that `apply` would now create, change or delete, for example when someone deletes a deny rule or edits the policy without re-applying. It only applies once `.rookery/applied.json` exists.
+
 ## Exceptions
 
 Exceptions live only in `.rookery.yml`, so every one is reviewed in one place.
@@ -110,6 +119,43 @@ Exceptions live only in `.rookery.yml`, so every one is reviewed in one place.
 
 `check` reports exceptions that matched nothing (unused) and ones that have expired, so they don't pile up.
 
+## `rookery policy apply`: write the policy into each agent's config
+
+`check` judges what's in the repo. `apply` makes the agents enforce the policy themselves. It writes each agent's own config from `.rookery.yml`, for the agents found in the repo (or listed in `agents:`).
+
+```bash
+npx @thinkingraven/rookery policy apply           # dry run: shows a diff per file, writes nothing
+npx @thinkingraven/rookery policy apply --write   # writes the files; commit them
+```
+
+| Agent | What `apply` writes in the repo |
+|---|---|
+| Claude Code | `.claude/settings.json`: `permissions.disableBypassPermissionsMode: "disable"`; `permissions.deny` with `Bash(prefix)`, `Bash(prefix *)` and `Read(glob)`; `allowedMcpServers` when `mcp.unlisted` is `forbid` |
+| Codex | `.codex/rules/rookery.rules`: one `prefix_rule(…, decision = "forbidden")` per `shell.deny` entry |
+| Gemini CLI | `.gemini/settings.json`: `security.disableYoloMode`, `mcp.allowed`, and `tools.exclude` with `run_shell_command(prefix)`; `.geminiignore` for in-repo `never_read` paths |
+| Cursor | `.cursor/cli.json`: `permissions.deny` with `Shell(cmd:args*)` and `Read(glob)` (the CLI reads this file); `.cursorignore` for in-repo `never_read` paths |
+| Windsurf | `.devinignore` for in-repo `never_read` paths |
+| GitHub Copilot | nothing: a repo can't enforce these for Copilot (VS Code's `false` terminal rules only prompt) |
+
+**What only an admin can enforce** goes into `.rookery/ADMIN.md`, regenerated on every apply, with the exact snippet per agent:
+- Claude Code: `managed-settings.json`;
+- Codex: `requirements.toml` (`allowed_approval_policies`, `allowed_sandbox_modes`, `deny_read`, `prefix_rules`);
+- Gemini CLI: the system settings file and an admin policy TOML;
+- Cursor: dashboard steps, plus turning Workspace Trust on through MDM;
+- GitHub Copilot: enterprise `managed-settings.json`;
+- Windsurf: team settings.
+
+Codex permission profiles are beta, and Codex ignores them when any config sets `sandbox_mode`. That's why Codex read denies go to `ADMIN.md`, not the repo.
+
+**How `apply` treats your files:**
+- **Additive and owned.** `apply` records every value it adds in `.rookery/applied.json`. The next run updates or removes only those values. Values you wrote, even identical ones, are never claimed or removed.
+- **Never overrides.** If a file sets a key to a different value, for example `"disableYoloMode": false`, `apply` leaves it and reports a conflict.
+- **No comments lost.** JSON files with comments are not rewritten; `apply` lists what to add by hand. Other JSON files are rewritten with 2-space indentation.
+- **Marked blocks.** Ignore files get a block between `# >>> rookery` and `# <<< rookery`. Lines outside it are untouched.
+- **Clean removal.** When the policy no longer needs something, `apply` takes it back out. Files it created are deleted once empty.
+
+After the first `--write`, `check` reports drift (`RK-POL-007`) whenever the configs fall out of date with `.rookery.yml`.
+
 ## Can the agents enforce it themselves?
 
 `check` judges the files in the repo. Whether each agent can *enforce* the same rule while it runs is a different question, and the answer differs per agent. `check` prints that per policy setting, for the agents it found, from [the capability matrix](agent-capabilities.md):
@@ -121,7 +167,7 @@ What these agents can enforce themselves:
   files.read_secrets  Claude Code yes · Cursor partial
 ```
 
-"Partial" means the agent has the control with important gaps; the matrix lists them. Writing each agent's own config from the policy is the next step on the roadmap (`rookery policy apply`).
+"Partial" means the agent has the control with important gaps; the matrix lists them. `rookery policy apply` writes the parts each agent accepts from a repo.
 
 ## In CI
 

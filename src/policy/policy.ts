@@ -22,10 +22,11 @@ export interface Policy {
   agents?: Agent[];             // judge only these agents' files
   fail_on: Severity | 'none';   // scan findings at or above this severity fail the check
   approvals: { bypass: Level };
-  shell: { any_command: Level };
+  shell: { any_command: Level; deny: string[] };   // deny: command prefixes written into each agent's deny rules by `policy apply`
   mcp: { unpinned: Level; unlisted: Level; allow: string[] };
   hooks: { network: Level };
   files: { read_secrets: Level; never_read: string[] };
+  drift: Level;                 // agent configs out of date with the policy (once `policy apply` has been used)
   exceptions: Exception[];
 }
 
@@ -44,26 +45,29 @@ export const PRESETS: Record<PresetName, Omit<Policy, 'version' | 'extends' | 'e
   strict: {
     fail_on: 'medium',
     approvals: { bypass: 'forbid' },
-    shell: { any_command: 'forbid' },
+    shell: { any_command: 'forbid', deny: [] },
     mcp: { unpinned: 'forbid', unlisted: 'forbid', allow: [] },
     hooks: { network: 'forbid' },
     files: { read_secrets: 'forbid', never_read: NEVER_READ_DEFAULT },
+    drift: 'forbid',
   },
   balanced: {
     fail_on: 'high',
     approvals: { bypass: 'forbid' },
-    shell: { any_command: 'forbid' },
+    shell: { any_command: 'forbid', deny: [] },
     mcp: { unpinned: 'forbid', unlisted: 'allow', allow: [] },
     hooks: { network: 'warn' },
     files: { read_secrets: 'forbid', never_read: NEVER_READ_DEFAULT },
+    drift: 'warn',
   },
   solo: {
     fail_on: 'none',
     approvals: { bypass: 'warn' },
-    shell: { any_command: 'warn' },
+    shell: { any_command: 'warn', deny: [] },
     mcp: { unpinned: 'warn', unlisted: 'allow', allow: [] },
     hooks: { network: 'warn' },
     files: { read_secrets: 'warn', never_read: NEVER_READ_DEFAULT },
+    drift: 'allow',
   },
 };
 
@@ -80,8 +84,8 @@ const AGENT_ALIASES: Record<string, Agent> = {
   'github-copilot': 'copilot', gemini: 'gemini', 'gemini-cli': 'gemini', windsurf: 'windsurf',
 };
 const SHAPE: Record<string, string[] | null> = {
-  version: null, extends: null, agents: null, fail_on: null, exceptions: null,
-  approvals: ['bypass'], shell: ['any_command'], mcp: ['unpinned', 'unlisted', 'allow'], hooks: ['network'], files: ['read_secrets', 'never_read'],
+  version: null, extends: null, agents: null, fail_on: null, exceptions: null, drift: null,
+  approvals: ['bypass'], shell: ['any_command', 'deny'], mcp: ['unpinned', 'unlisted', 'allow'], hooks: ['network'], files: ['read_secrets', 'never_read'],
 };
 
 /** Parse and validate policy YAML. Unknown keys and bad values are errors, so typos never weaken a policy silently. */
@@ -129,6 +133,13 @@ export function parsePolicy(text: string, source = '.rookery.yml'): Policy {
   }
   level('approvals.bypass', sec('approvals').bypass, (l) => { policy.approvals.bypass = l; });
   level('shell.any_command', sec('shell').any_command, (l) => { policy.shell.any_command = l; });
+  const deny = list('shell.deny', sec('shell').deny);
+  if (deny) {
+    const bad = deny.filter((d) => !/^[\w./@+-][^\n"'`$;|&<>()]*$/.test(d));
+    if (bad.length) problems.push(`${where('shell.deny')} entries must be plain command prefixes (no quotes, pipes or shell syntax): ${bad.join(', ')}`);
+    else policy.shell.deny = deny.map((d) => d.replace(/\s+/g, ' '));
+  }
+  level('drift', doc.drift, (l) => { policy.drift = l; });
   level('mcp.unpinned', sec('mcp').unpinned, (l) => { policy.mcp.unpinned = l; });
   level('mcp.unlisted', sec('mcp').unlisted, (l) => { policy.mcp.unlisted = l; });
   const allow = list('mcp.allow', sec('mcp').allow);
@@ -167,6 +178,7 @@ export const POLICY_RULES = [
   { id: 'RK-POL-004', key: 'mcp.unlisted', title: 'MCP server not on the allow-list', why: 'The policy only allows the MCP servers listed in mcp.allow.', remediation: 'Remove the server, or add its name to mcp.allow after review.' },
   { id: 'RK-POL-005', key: 'hooks.network', title: 'Hook makes network calls', why: 'The policy does not allow hooks that call the network.', remediation: 'Keep hooks local; move network work into an explicit, reviewed command.' },
   { id: 'RK-POL-006', key: 'files.read_secrets', title: 'Reads credentials or protected paths', why: 'The policy does not allow agent files to read credentials, password stores or the paths in files.never_read.', remediation: 'Use the tool\'s own auth flow or ask the user for the one value needed.' },
+  { id: 'RK-POL-007', key: 'drift', title: 'Agent config out of date with the policy', why: 'The policy was applied to this repo\'s agent configs with `rookery policy apply`, and they no longer match it.', remediation: 'Run `rookery policy apply --write` and commit the result.' },
 ] as const;
 export type PolicyRuleKey = typeof POLICY_RULES[number]['key'];
 const RULE_KEYS = new Set<string>(POLICY_RULES.map((r) => r.key));
@@ -203,6 +215,7 @@ approvals:
   bypass: ${p.approvals.bypass}              # --dangerously-skip-permissions, bypassPermissions, --yolo, approval_policy = "never"…
 shell:
   any_command: ${p.shell.any_command}         # bare Bash / Bash(*) in settings, or in a skill's allowed-tools
+  deny: []                   # command prefixes \`rookery policy apply\` writes into each agent's deny rules, e.g. ["rm -rf", "git push --force"]
 mcp:
   unpinned: ${p.mcp.unpinned}            # npx/uvx servers without an exact version
   unlisted: ${p.mcp.unlisted}${' '.repeat(Math.max(1, 12 - p.mcp.unlisted.length))}# servers whose name is not in allow
@@ -213,6 +226,9 @@ files:
   read_secrets: ${p.files.read_secrets}        # credential files, password managers, and the paths below
   never_read:
 ${p.files.never_read.map((x) => `    - "${x}"`).join('\n')}
+
+# Once \`rookery policy apply --write\` has run, agent configs that no longer match this file are drift.
+drift: ${p.drift}
 
 # Only judge these agents' files (default: all). claude-code, codex, cursor, copilot, gemini, windsurf
 # agents: [claude-code, cursor]

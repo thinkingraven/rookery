@@ -3,6 +3,8 @@ import { SEVERITIES } from '../types.js';
 import { lowConfidence } from '../rules.js';
 import { AGENT_SUPPORT } from './capabilities.js';
 import { POLICY_RULES, type Level, type LoadedPolicy, type PolicyRuleKey } from './policy.js';
+import { dirname } from 'node:path';
+import { planApply, readState } from './apply.js';
 
 /** Scan rules each policy rule builds on. */
 const FROM_FINDINGS: Partial<Record<PolicyRuleKey, string[]>> = {
@@ -73,6 +75,7 @@ export function checkPolicy(r: ScanResult, loaded: LoadedPolicy, opts: CheckOpti
     'mcp.unlisted': policy.mcp.unlisted,
     'hooks.network': policy.hooks.network,
     'files.read_secrets': policy.files.read_secrets,
+    drift: policy.drift,
   };
   const raw: PolicyViolation[] = [];
   const add = (key: PolicyRuleKey, v: Omit<PolicyViolation, 'ruleId' | 'key' | 'level' | 'title'>) => {
@@ -124,6 +127,19 @@ export function checkPolicy(r: ScanResult, loaded: LoadedPolicy, opts: CheckOpti
         seen.add(k);
         add('files.read_secrets', { message: `Reads ${hit.glob}, which files.never_read protects.`, repo: a.repo, relPath: t.relPath, line: i + 1, snippet: line.trim().slice(0, 160), agent: a.agent });
       });
+    }
+  }
+
+  // 4. Drift: once `policy apply --write` has run here, the agent configs must still match what apply would write.
+  if (loaded.source && levelOf.drift !== 'allow') {
+    const root = dirname(loaded.source);
+    if (readState(root)) {
+      const found = [...new Set(r.artifacts.map((a) => a.agent))];
+      const plan = planApply(root, policy, found);
+      const repo = r.artifacts.find((a) => a.repoRoot === root)?.repo ?? root.split('/').pop() ?? root;
+      for (const c of plan.changes.filter((x) => x.status !== 'unchanged')) {
+        add('drift', { message: `${c.path} would be ${c.status === 'create' ? 'created' : c.status === 'delete' ? 'deleted' : 'changed'} by \`rookery policy apply\`.`, repo, relPath: c.path, line: 1, snippet: `run rookery policy apply --write (${c.status})`, agent: c.agent });
+      }
     }
   }
 

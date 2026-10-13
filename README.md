@@ -250,6 +250,7 @@ exceptions:
 - **No policy file yet?** `check` shows what the balanced preset would flag, as warnings only.
 - **In CI:** the GitHub Action runs `check` automatically when the repo has a `.rookery.yml`.
 - **For each setting:** it also prints whether each agent in the repo can enforce that rule itself, from the capability matrix.
+- **`rookery policy apply --write`:** writes the policy into each agent's own config: Claude Code settings, Codex rules, Gemini CLI settings, Cursor CLI permissions and ignore files. Admin-only settings go to `.rookery/ADMIN.md`. It only adds and later removes its own values, and `check` reports drift when the configs fall out of date.
 
 Full reference: [docs/policy.md](docs/policy.md).
 
@@ -260,7 +261,7 @@ Full reference: [docs/policy.md](docs/policy.md).
 ## Roadmap
 
 - `--github-org <org>` to scan an organisation without cloning by hand
-- `rookery policy apply`: compile `.rookery.yml` into each agent's own config. What each agent can enforce today: [docs/agent-capabilities.md](docs/agent-capabilities.md)
+- A fail-closed pre-tool-use hook that enforces `.rookery.yml` while agents run, and logs decisions locally
 - Match local skills against well-known public skills
 - A registry to publish, review, distribute and measure the skills rookery finds
 

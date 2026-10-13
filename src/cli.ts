@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { existsSync, writeFileSync } from 'node:fs';
+import { dirname, relative } from 'node:path';
 import { scan } from './scan.js';
 import { renderTerminal } from './report/terminal.js';
 import { renderJson } from './report/json.js';
@@ -10,6 +11,7 @@ import { renderSarif } from './report/sarif.js';
 import { ALL_RULES } from './rules.js';
 import { loadPolicy, PolicyError, POLICY_RULES, policyTemplate, PRESETS, type PresetName } from './policy/policy.js';
 import { checkPolicy } from './policy/check.js';
+import { ADMIN_FILE, STATE_FILE, lineDiff, planApply, writePlan } from './policy/apply.js';
 import { SEVERITIES, type Severity } from './types.js';
 import { VERSION } from './version.js';
 
@@ -19,6 +21,7 @@ Usage
   rookery scan [paths...]        Scan one or more repos or folders (default: .)
   rookery check [paths...]       Scan, then check the result against .rookery.yml (exit 1 if it fails)
   rookery policy init            Write a starter .rookery.yml (--preset strict|balanced|solo)
+  rookery policy apply [path]    Show how .rookery.yml maps into each agent's own config (--write to apply)
   rookery rules                  List every security and policy rule
 
 Options
@@ -43,6 +46,7 @@ Options
   --policy <file>                     Policy file for check (default: .rookery.yml next to the scanned folder)
   --preset <name>                     Preset for policy init: strict, balanced (default) or solo
   --force                             Let policy init overwrite an existing file
+  --write                             Let policy apply write the files (without it, apply only shows a diff)
   -v, --version                       Print the version
   -h, --help                          Show this help
 
@@ -84,6 +88,7 @@ function main(argv: string[]): number {
         policy: { type: 'string' },
         preset: { type: 'string', default: 'balanced' },
         force: { type: 'boolean', default: false },
+        write: { type: 'boolean', default: false },
       },
     });
   } catch (err) {
@@ -99,8 +104,9 @@ function main(argv: string[]): number {
     for (const r of POLICY_RULES) process.stdout.write(`${r.id}  ${'policy'.padEnd(8)}  ${r.title} (${r.key})\n          ${r.why}\n`);
     return 0;
   }
+  if (command === 'policy' && rest[0] === 'apply') return policyApply(rest[1] ?? '.', o as Record<string, unknown>);
   if (command === 'policy') {
-    if (rest[0] !== 'init') fail(`unknown policy command: ${rest[0] ?? '(none)'}. Did you mean \`rookery policy init\`?`);
+    if (rest[0] !== 'init') fail(`unknown policy command: ${rest[0] ?? '(none)'}. Did you mean \`rookery policy init\` or \`rookery policy apply\`?`);
     const preset = o.preset as string;
     if (!(preset in PRESETS)) fail('--preset must be strict, balanced or solo');
     const file = (o.policy as string | undefined) ?? '.rookery.yml';
@@ -159,6 +165,42 @@ function main(argv: string[]): number {
     const counted = result.findings.filter((f) => o.strict || f.confidence === 'high');
     if (counted.some((f) => SEVERITIES.indexOf(f.severity) <= limit)) return 1;
   }
+  return 0;
+}
+
+function policyApply(target: string, o: Record<string, unknown>): number {
+  let loaded;
+  try { loaded = loadPolicy(o.policy as string | undefined, [target]); } catch (err) {
+    if (err instanceof PolicyError) fail(`invalid policy\n${err.message}`);
+    throw err;
+  }
+  if (!loaded.source) fail(`no .rookery.yml in ${target}. Run \`rookery policy init\` first.`);
+  const root = dirname(loaded.source);
+  let result;
+  try { result = scan({ paths: [root], maxFileBytes: 512 * 1024, includeInfo: false, similarityThreshold: 0.5 }); } catch (err) { fail((err as Error).message); }
+  const plan = planApply(root, loaded.policy, [...new Set(result.artifacts.map((a) => a.agent))]);
+  const color = !o['no-color'] && !process.env.NO_COLOR && (Boolean(process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') || process.stdout.isTTY === true);
+  const c = (code: string) => (s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
+  const bold = c('1'), dim = c('2'), green = c('32'), red = c('31'), yellow = c('33'), amber = c('38;5;214');
+  const AGENT: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', cursor: 'Cursor', copilot: 'GitHub Copilot', windsurf: 'Windsurf' };
+  const out: string[] = [`${bold('rookery')}${amber('.')} ${dim('policy apply')}  ${dim('·')}  ${relative(process.cwd(), loaded.source) || '.rookery.yml'}  ${dim('·')}  ${plan.agents.length ? plan.agents.map((a) => AGENT[a] ?? a).join(', ') : 'no agents found (list them under agents: in .rookery.yml)'}`, ''];
+  const changed = plan.changes.filter((x) => x.status !== 'unchanged');
+  for (const ch of changed) {
+    const tag = ch.status === 'create' ? green('create') : ch.status === 'delete' ? red('delete') : yellow('update');
+    out.push(`${tag} ${bold(ch.path)}${ch.agent ? dim(`  (${AGENT[ch.agent] ?? ch.agent})`) : ''}`);
+    if (ch.path === ADMIN_FILE || ch.path === STATE_FILE) { out.push(dim(ch.path === ADMIN_FILE ? '    admin-only settings for this policy, regenerated on each apply' : '    what rookery added, so the next apply can update or remove only its own values'), ''); continue; }
+    for (const l of lineDiff(ch.before, ch.after)) out.push('    ' + (l.startsWith('+') ? green(l) : l.startsWith('-') ? red(l) : dim(l)));
+    out.push('');
+  }
+  if (!changed.length) out.push(green('Everything already matches the policy.'), '');
+  for (const nt of plan.notes) out.push(`${amber('note')} ${nt}`);
+  for (const cf of plan.conflicts) out.push(`${yellow('!')} ${cf}`);
+  if (plan.conflicts.length || plan.notes.length) out.push('');
+  if (o.write) {
+    const n = writePlan(root, plan);
+    out.push(n ? `${green('Wrote')} ${n} file${n === 1 ? '' : 's'}. Commit them; \`rookery check\` now reports drift if they fall out of date. Admin-only settings: ${ADMIN_FILE}.` : 'Nothing to write.');
+  } else if (changed.length) out.push(dim('Dry run: nothing written. Run again with --write to apply.'));
+  process.stdout.write(out.join('\n') + '\n');
   return 0;
 }
 
