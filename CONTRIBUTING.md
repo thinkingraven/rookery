@@ -27,6 +27,7 @@ Node 20 or newer.
 | `src/report/*` | Terminal, JSON, Markdown and HTML reports |
 | `test/` | `node:test` suite and fixture repos |
 | `scripts/gen-rules-doc.mjs` | Generates `docs/rules.md` from the rules |
+| `docs/agent-capabilities.json` | What each coding agent can enforce; `npm run docs:capabilities` regenerates `docs/agent-capabilities.md` from it |
 | `action.yml` | The GitHub Action |
 
 ## Adding or changing a rule

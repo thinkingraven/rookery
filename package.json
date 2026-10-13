@@ -41,7 +41,8 @@
     "test": "npm run build && node --test dist/test/*.test.js",
     "scan": "node dist/src/cli.js scan",
     "prepublishOnly": "npm test",
-    "docs": "npm run build && node scripts/gen-rules-doc.mjs"
+    "docs": "npm run build && node scripts/gen-rules-doc.mjs",
+    "docs:capabilities": "node scripts/gen-capabilities-doc.mjs"
   },
   "dependencies": {
     "yaml": "^2.5.0"
