@@ -224,10 +224,14 @@ No. Those tools install and sync skills on one machine; rookery is the inventory
 Today it scans local folders, so clone the repos first (for example with `gh repo list ORG --json name -q '.[].name' | xargs -I{} gh repo clone ORG/{}`). A built-in `--github-org` option is on the roadmap.
 </details>
 
+## What can each agent enforce?
+
+[docs/agent-capabilities.md](docs/agent-capabilities.md) compares Claude Code, Codex, Gemini CLI, OpenCode, Cursor, GitHub Copilot and Windsurf on 16 controls: allow/deny/ask rules, read and write limits, network, sandbox, bypass modes and admin lockout, MCP allow-lists, blocking hooks, managed policy, and whether a cloned repo's own config takes effect. Every cell links to the docs or source it came from.
+
 ## Roadmap
 
 - `--github-org <org>` to scan an organisation without cloning by hand
-- A `.rookery.yml` policy file (allowed MCP servers, banned patterns, required descriptions)
+- A `.rookery.yml` policy file that rookery checks in CI and compiles into each agent's own config. What each agent can enforce today: [docs/agent-capabilities.md](docs/agent-capabilities.md)
 - Match local skills against well-known public skills
 - A registry to publish, review, distribute and measure the skills rookery finds
 
