@@ -25,6 +25,7 @@ Node 20 or newer.
 | `src/similarity.ts` | MinHash + LSH near-duplicate clustering |
 | `src/categories.ts` | Purpose taxonomy ("Code review", "Testing"…) |
 | `src/report/*` | Terminal, JSON, Markdown and HTML reports |
+| `src/policy/*` | `.rookery.yml` parsing and presets (`policy.ts`), judging a scan against a policy (`check.ts`), and the generated per-agent support table (`capabilities.ts`, from `npm run docs:capabilities`) |
 | `test/` | `node:test` suite and fixture repos |
 | `scripts/gen-rules-doc.mjs` | Generates `docs/rules.md` from the rules |
 | `docs/agent-capabilities.json` | What each coding agent can enforce; `npm run docs:capabilities` regenerates `docs/agent-capabilities.md` from it |

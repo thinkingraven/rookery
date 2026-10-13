@@ -1,0 +1,3 @@
+# rookery checks its own repo with the strictest preset. Docs: docs/policy.md
+version: 1
+extends: strict

@@ -96,6 +96,34 @@ export interface DuplicateCluster {
   syncedFrom?: string;      // every member was installed from this source: synced copies, not a team duplicate
 }
 
+export interface PolicyViolation {
+  ruleId: string;            // RK-POL-00x
+  key: string;               // settings key, e.g. shell.any_command
+  level: 'error' | 'warning';
+  title: string;
+  message: string;
+  repo: string;
+  relPath: string;
+  line: number;
+  snippet: string;
+  agent?: Agent;
+  fromFinding?: string;      // the scan rule behind it, when there is one
+  exception?: { path: string; reason: string };
+}
+
+export interface PolicyResult {
+  source: string | null;     // .rookery.yml path, or null when the default preset was used
+  preset: string;
+  enforced: boolean;         // false without a policy file: everything is reported as a warning
+  failOn: Severity | 'none';
+  violations: PolicyViolation[];          // after exceptions
+  excepted: PolicyViolation[];            // matched a valid exception
+  exceptions: { path: string; rules: string[]; reason: string; expires?: string; status: 'used' | 'unused' | 'expired'; matched: number }[];
+  findingsAtOrAbove: number;              // scan findings at or above failOn
+  coverage: { key: string; capability: string; agents: { agent: string; name: string; support: string }[] }[];
+  passed: boolean;
+}
+
 export interface ScanResult {
   tool: { name: string; version: string };
   scannedAt: string;
@@ -105,6 +133,7 @@ export interface ScanResult {
   findings: Finding[];
   clusters: DuplicateCluster[];
   categories: { category: string; count: number; repos: number }[];
+  policy?: PolicyResult;     // set by `rookery check`
   stats: {
     artifacts: number;
     byAgent: Record<string, number>;

@@ -118,7 +118,7 @@ jobs:
           html: rookery-report.html  # optional
 ```
 
-The findings land in the job summary. Inputs: `path` (default `.`), `fail-on` (default `high`), `html`, `sarif`, and `args` for any other options (for example `--strict`).
+The findings land in the job summary. Inputs: `path` (default `.`), `fail-on` (default `high`), `html`, `sarif`, `policy`, and `args` for any other options (for example `--strict`). With a `.rookery.yml` at the repo root (or `policy:` set), the action runs `rookery check` and the policy decides what fails.
 
 ### GitHub code scanning
 
@@ -224,6 +224,35 @@ No. Those tools install and sync skills on one machine; rookery is the inventory
 Today it scans local folders, so clone the repos first (for example with `gh repo list ORG --json name -q '.[].name' | xargs -I{} gh repo clone ORG/{}`). A built-in `--github-org` option is on the roadmap.
 </details>
 
+## Policy: `rookery check`
+
+`scan` tells you what's there. `check` tells you whether it's **allowed**. Write what agents may do into `.rookery.yml`, and `check` fails CI when a skill, command, settings file or MCP config breaks it. The same policy covers Claude Code, Codex, Cursor, Copilot, Gemini CLI and Windsurf.
+
+```bash
+npx @thinkingraven/rookery policy init     # starter .rookery.yml (strict | balanced | solo)
+npx @thinkingraven/rookery check           # exit 1 if the policy fails
+```
+
+```yaml
+version: 1
+extends: balanced
+approvals: { bypass: forbid }          # --dangerously-skip-permissions, --yolo, approval_policy = "never"…
+shell: { any_command: forbid }         # bare Bash / Bash(*)
+mcp: { unpinned: forbid, unlisted: forbid, allow: [github] }
+files: { never_read: ["~/.ssh/**", "**/.env"] }
+exceptions:
+  - path: .claude/skills/deploy/**
+    rules: [shell.any_command]
+    reason: "Reviewed by @platform"
+    expires: 2026-12-31
+```
+
+- **No policy file yet?** `check` shows what the balanced preset would flag, as warnings only.
+- **In CI:** the GitHub Action runs `check` automatically when the repo has a `.rookery.yml`.
+- **For each setting:** it also prints whether each agent in the repo can enforce that rule itself, from the capability matrix.
+
+Full reference: [docs/policy.md](docs/policy.md).
+
 ## What can each agent enforce?
 
 [docs/agent-capabilities.md](docs/agent-capabilities.md) compares Claude Code, Codex, Gemini CLI, OpenCode, Cursor, GitHub Copilot and Windsurf on 16 controls: allow/deny/ask rules, read and write limits, network, sandbox, bypass modes and admin lockout, MCP allow-lists, blocking hooks, managed policy, and whether a cloned repo's own config takes effect. Every cell links to the docs or source it came from.
@@ -231,7 +260,7 @@ Today it scans local folders, so clone the repos first (for example with `gh rep
 ## Roadmap
 
 - `--github-org <org>` to scan an organisation without cloning by hand
-- A `.rookery.yml` policy file that rookery checks in CI and compiles into each agent's own config. What each agent can enforce today: [docs/agent-capabilities.md](docs/agent-capabilities.md)
+- `rookery policy apply`: compile `.rookery.yml` into each agent's own config. What each agent can enforce today: [docs/agent-capabilities.md](docs/agent-capabilities.md)
 - Match local skills against well-known public skills
 - A registry to publish, review, distribute and measure the skills rookery finds
 

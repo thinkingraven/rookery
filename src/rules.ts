@@ -272,6 +272,11 @@ function unpinnedPackage(cmd?: string, args: string[] = []): string | null {
 
 const BROAD_BASH = /^(?:\*|Bash|Bash\(\*\)|Bash\(\*:\*\)|Bash\(:\*\))$/;
 
+/** True when a matched line reads as an example, warning, test or scanner pattern rather than an instruction. */
+export function lowConfidence(ruleId: string, relPath: string, line: string): boolean {
+  return assess(ruleId, relPath, line, line, line).confidence === 'low';
+}
+
 /** Run every rule against one artifact (its own text, bundled files and structured config). */
 export function runRules(art: Artifact): Finding[] {
   const findings: Finding[] = [];

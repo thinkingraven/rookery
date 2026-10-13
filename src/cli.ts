@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { scan } from './scan.js';
 import { renderTerminal } from './report/terminal.js';
 import { renderJson } from './report/json.js';
@@ -8,6 +8,8 @@ import { renderMarkdown } from './report/markdown.js';
 import { renderHtml } from './report/html.js';
 import { renderSarif } from './report/sarif.js';
 import { ALL_RULES } from './rules.js';
+import { loadPolicy, PolicyError, POLICY_RULES, policyTemplate, PRESETS, type PresetName } from './policy/policy.js';
+import { checkPolicy } from './policy/check.js';
 import { SEVERITIES, type Severity } from './types.js';
 import { VERSION } from './version.js';
 
@@ -15,7 +17,9 @@ const HELP = `rookery v${VERSION}: find, de-duplicate and security-check AI agen
 
 Usage
   rookery scan [paths...]        Scan one or more repos or folders (default: .)
-  rookery rules                  List every security rule
+  rookery check [paths...]       Scan, then check the result against .rookery.yml (exit 1 if it fails)
+  rookery policy init            Write a starter .rookery.yml (--preset strict|balanced|solo)
+  rookery rules                  List every security and policy rule
 
 Options
   --format <terminal|json|markdown|sarif>
@@ -36,6 +40,9 @@ Options
                                       ~/.codex, ~/.cursor, ~/.gemini, ~/.config/skillshare)
   --verbose                           Show everything in the terminal report
   --no-color                          Disable colours (also respects NO_COLOR; FORCE_COLOR forces them)
+  --policy <file>                     Policy file for check (default: .rookery.yml next to the scanned folder)
+  --preset <name>                     Preset for policy init: strict, balanced (default) or solo
+  --force                             Let policy init overwrite an existing file
   -v, --version                       Print the version
   -h, --help                          Show this help
 
@@ -43,6 +50,7 @@ Examples
   npx @thinkingraven/rookery scan .
   npx @thinkingraven/rookery scan ~/code --html rookery-report.html
   npx @thinkingraven/rookery scan . --format json --fail-on high   # in CI
+  npx @thinkingraven/rookery policy init && npx @thinkingraven/rookery check
 `;
 
 function fail(msg: string): never {
@@ -73,6 +81,9 @@ function main(argv: string[]): number {
         'no-color': { type: 'boolean', default: false },
         version: { type: 'boolean', short: 'v', default: false },
         help: { type: 'boolean', short: 'h', default: false },
+        policy: { type: 'string' },
+        preset: { type: 'string', default: 'balanced' },
+        force: { type: 'boolean', default: false },
       },
     });
   } catch (err) {
@@ -85,11 +96,23 @@ function main(argv: string[]): number {
   const [command = 'scan', ...rest] = positionals;
   if (command === 'rules') {
     for (const r of ALL_RULES) process.stdout.write(`${r.id}  ${r.severity.padEnd(8)}  ${r.title}\n          ${r.why}\n`);
+    for (const r of POLICY_RULES) process.stdout.write(`${r.id}  ${'policy'.padEnd(8)}  ${r.title} (${r.key})\n          ${r.why}\n`);
     return 0;
   }
+  if (command === 'policy') {
+    if (rest[0] !== 'init') fail(`unknown policy command: ${rest[0] ?? '(none)'}. Did you mean \`rookery policy init\`?`);
+    const preset = o.preset as string;
+    if (!(preset in PRESETS)) fail('--preset must be strict, balanced or solo');
+    const file = (o.policy as string | undefined) ?? '.rookery.yml';
+    if (existsSync(file) && !o.force) fail(`${file} already exists (use --force to overwrite)`);
+    writeFileSync(file, policyTemplate(preset as PresetName));
+    process.stdout.write(`Wrote ${file} (preset: ${preset}). Run \`rookery check\` to see where this repo stands.\n`);
+    return 0;
+  }
+  const checking = command === 'check';
   // Allow `rookery <path>` as a shortcut for `rookery scan <path>`.
-  const paths = command === 'scan' ? rest : [command, ...rest];
-  if (command !== 'scan' && command.startsWith('-')) fail(`unknown command: ${command}`);
+  const paths = command === 'scan' || checking ? rest : [command, ...rest];
+  if (command !== 'scan' && !checking && command.startsWith('-')) fail(`unknown command: ${command}`);
 
   const format = o.format as string;
   if (!['terminal', 'json', 'markdown', 'sarif'].includes(format)) fail(`--format must be terminal, json, markdown or sarif (got "${format}")`);
@@ -100,12 +123,22 @@ function main(argv: string[]): number {
   const failOn = o['fail-on'] as Severity | undefined;
   if (failOn && !SEVERITIES.includes(failOn)) fail(`--fail-on must be one of ${SEVERITIES.join(', ')}`);
 
+  let loaded;
+  if (checking) {
+    try { loaded = loadPolicy(o.policy as string | undefined, paths); } catch (err) {
+      if (err instanceof PolicyError) fail(`invalid policy\n${err.message}`);
+      throw err;
+    }
+  }
+
   let result;
   try {
     result = scan({ paths: paths.length ? paths : o.local ? [] : ['.'], maxFileBytes: maxKb * 1024, includeInfo: o.info as boolean, similarityThreshold: threshold, worktrees: o.worktrees as boolean, local: o.local as boolean });
   } catch (err) {
     fail((err as Error).message);
   }
+
+  if (loaded) result.policy = checkPolicy(result, loaded, { strict: o.strict as boolean });
 
   if (o.html) writeFileSync(o.html as string, renderHtml(result));
   if (o.json) writeFileSync(o.json as string, renderJson(result));
@@ -120,12 +153,18 @@ function main(argv: string[]): number {
     process.stdout.write(renderTerminal(result, { color, verbose: o.verbose as boolean, htmlPath: o.html as string | undefined }));
   }
 
+  if (result.policy) return result.policy.passed && !(failOn && failedOn(result.findings, failOn, o.strict as boolean)) ? 0 : 1;
   if (failOn) {
     const limit = SEVERITIES.indexOf(failOn);
     const counted = result.findings.filter((f) => o.strict || f.confidence === 'high');
     if (counted.some((f) => SEVERITIES.indexOf(f.severity) <= limit)) return 1;
   }
   return 0;
+}
+
+function failedOn(findings: { severity: Severity; confidence: string }[], failOn: Severity, strict: boolean): boolean {
+  const limit = SEVERITIES.indexOf(failOn);
+  return findings.some((f) => (strict || f.confidence === 'high') && SEVERITIES.indexOf(f.severity) <= limit);
 }
 
 process.exitCode = main(process.argv.slice(2));
