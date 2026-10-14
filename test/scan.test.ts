@@ -97,7 +97,18 @@ test('CLI: JSON output, HTML report and --fail-on exit code', () => {
   const json = JSON.parse(run.stdout);
   assert.equal(json.tool.name, 'rookery');
   assert.ok(!('body' in json.artifacts[0]), 'JSON must not include file bodies');
+  assert.ok(!('path' in json.artifacts[0]) && !('realPath' in json.artifacts[0]), 'no absolute file paths');
+  assert.ok(json.artifacts.every((a: { repoRoot: string; repo: string }) => a.repoRoot.endsWith('/' + a.repo)), 'repoRoot, so other tools can match repos');
   assert.ok(existsSync(html) && readFileSync(html, 'utf8').includes('Rookery report'));
+});
+
+test('JSON report: repo paths under the home folder are shown as ~', async () => {
+  const { renderJson } = await import('../src/report/json.js');
+  const { homedir } = await import('node:os');
+  const art = { ...result.artifacts[0], repoRoot: join(homedir(), 'code', 'app'), path: join(homedir(), 'code', 'app', 'x') };
+  const json = JSON.parse(renderJson({ ...result, artifacts: [art] }));
+  assert.equal(json.artifacts[0].repoRoot, '~/code/app');
+  assert.ok(!JSON.stringify(json.artifacts[0]).includes(homedir()), 'no home folder in the artifact');
 });
 
 test('CLI: clean repo exits 0 and says nothing was found', () => {

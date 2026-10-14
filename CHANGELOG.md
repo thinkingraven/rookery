@@ -2,6 +2,10 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## 0.7.2 — 2026-10-14
+
+- **JSON report: each artifact keeps its `repoRoot`**, with your home folder shown as `~` (for example `~/code/app`). Tools that combine rookery with agent usage, such as roost, need it to match a skill to the repo an agent ran in. Absolute file paths and file contents are still left out.
+
 ## 0.7.1 — 2026-10-14
 
 - **Capability matrix corrections** (`docs/agent-capabilities.md` and `.json`, and what `rookery check` prints about which agents can enforce a rule):
