@@ -2,6 +2,17 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## 0.7.1 — 2026-10-14
+
+- **Capability matrix corrections** (`docs/agent-capabilities.md` and `.json`, and what `rookery check` prints about which agents can enforce a rule):
+  - **Deny commands:** Gemini CLI and OpenCode are now partial, like the other five. Their command rules match text, so a wrapper or another interpreter can get round them.
+  - **Lock out bypass modes:** Windsurf is now partial. The team setting caps Cascade only, and no toggle turns Bypass off in Devin Local.
+  - **Key findings rewritten:**
+    - Claude Code's Read deny does stop `cat`, `head`, `tail`, `sed` and `tee`.
+    - Which agents' hooks fail open, and which can fail closed (Claude Code `onFailure`, Cursor `failClosed`, Copilot on a crash), with sources.
+    - What "no complete audit log" means per agent.
+  - Researcher notes removed from the answers. The legend no longer lists "unknown", which no answer uses.
+
 ## 0.7.0 — 2026-10-14
 
 - **Skill quality, its own section in every report.** Seven new checks on top of "no description" and "very large file", each backed by an agent's documented limits:

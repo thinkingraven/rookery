@@ -556,6 +556,11 @@
           "limits": "Fail-open by default: exit codes other than 0/2, crashes, missing scripts and timeouts do not block unless onFailure: \"block\" is set (v2.1.295+). A hook \"allow\" cannot override deny/ask rules; deny precedence is deny > defer > ask > allow across hooks. @-file mentions in the prompt bypass PreToolUse. managed allowManagedHooksOnly limits hooks to managed, SDK and force-enabled plugin hooks; disableAllHooks outside managed settings cannot disable managed hooks, and a project's disableAllHooks: false overrides a user's true.",
           "evidence": [
             {
+              "source": "https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails",
+              "url": "https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails",
+              "quote": "To block the action instead, set `\"onFailure\": \"block\"` on a `command` or `http` hook."
+            },
+            {
               "source": "https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event",
               "url": "https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event",
               "quote": "`PreToolUse` | Yes | Blocks the tool call"
@@ -818,7 +823,7 @@
             "system/Team Config layers",
             "requirements.toml (system file, cloud-managed, MDM)"
           ],
-          "limits": "A forbidden match is rejected before execution with no approval prompt, so the user cannot approve it at runtime, in every approval mode including --yolo (the orchestrator rejects Forbidden before any sandbox decision). The user can still delete user/project rules, and `codex exec --ignore-rules` skips user and project .rules files (not requirements rules). Matching is argv-prefix only and is easy to sidestep with an unsplit script (e.g. a redirect inside bash -lc) or another interpreter, so the OS sandbox stays the real boundary. Applies to shell commands only. Rated partial (not yes) for consistency with the Claude Code file: the block is real and cannot be approved at runtime, but it matches argv prefixes only, so it is not a boundary on its own.",
+          "limits": "A forbidden match is rejected before execution with no approval prompt, so the user cannot approve it at runtime, in every approval mode including --yolo (the orchestrator rejects Forbidden before any sandbox decision). The user can still delete user/project rules, and `codex exec --ignore-rules` skips user and project .rules files (not requirements rules). Matching is argv-prefix only and is easy to sidestep with an unsplit script (e.g. a redirect inside bash -lc) or another interpreter, so the OS sandbox stays the real boundary. Applies to shell commands only.",
           "evidence": [
             {
               "source": "https://learn.chatgpt.com/docs/agent-configuration/rules",
@@ -1434,7 +1439,7 @@
             "settings tools.allowed / tools.core (any settings file)",
             "--allowed-tools flag"
           ],
-          "limits": "Granularity is prefix (word boundary) or regex. Chained commands (&&, ||, ;, pipes) are split and every part must be allowed, and bash -c wrappers are unwrapped. Redirection (>, >>, <) downgrades allow to ask unless the rule sets allowRedirection=true. If parsing fails, the default (ask, or deny when headless) applies. Per source, a narrowed tools.allowed entry such as run_shell_command(git) also adds a DENY rule just below it for every other shell command ('Narrowing Enforcement'), so other commands are blocked rather than prompted. This was not tested.",
+          "limits": "Granularity is prefix (word boundary) or regex. Chained commands (&&, ||, ;, pipes) are split and every part must be allowed, and bash -c wrappers are unwrapped. Redirection (>, >>, <) downgrades allow to ask unless the rule sets allowRedirection=true. If parsing fails, the default (ask, or deny when headless) applies. In the source code, a narrowed tools.allowed entry such as run_shell_command(git) also adds a DENY rule just below it for every other shell command ('Narrowing Enforcement'), so other commands are blocked rather than prompted. This was not tested.",
           "evidence": [
             {
               "source": "https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/reference/policy-engine.md",
@@ -1459,7 +1464,7 @@
           ]
         },
         "deny_commands": {
-          "support": "yes",
+          "support": "partial",
           "how": "Policy TOML rule with decision=\"deny\" (optional denyMessage). Example in /etc/gemini-cli/policies/deny.toml: [[rule]] toolName=\"run_shell_command\" commandPrefix=\"rm -rf\" decision=\"deny\" priority=900 denyMessage=\"blocked by IT\". Deprecated: tools.exclude [\"run_shell_command(rm)\"].",
           "scopes": [
             "user policy dir",
@@ -1497,7 +1502,7 @@
             "policyPaths / adminPolicyPaths settings",
             "tools.confirmationRequired (any settings file)"
           ],
-          "limits": "User and admin ask_user rules outrank the bundled YOLO allow-all (1.998), so they still prompt in yolo and auto_edit. In non-interactive (headless) mode ask_user becomes deny. tools.confirmationRequired takes plain tool names; per source it does not parse run_shell_command(args), so it cannot target specific commands. A BeforeTool hook can also force a prompt by returning decision \"ask\".",
+          "limits": "User and admin ask_user rules outrank the bundled YOLO allow-all (1.998), so they still prompt in yolo and auto_edit. In non-interactive (headless) mode ask_user becomes deny. tools.confirmationRequired takes plain tool names; the source code shows it does not parse run_shell_command(args), so it cannot target specific commands. A BeforeTool hook can also force a prompt by returning decision \"ask\".",
           "evidence": [
             {
               "source": "https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/reference/policy-engine.md",
@@ -1644,7 +1649,7 @@
             "--sandbox flag",
             "SANDBOX_FLAGS / SANDBOX_MOUNTS / GEMINI_SANDBOX_IMAGE env"
           ],
-          "limits": "Off by default. The configuration reference says YOLO enables the sandbox by default, but in v0.63.0 sandboxConfig.ts nothing turns it on for yolo (source-checked). Env overrides settings, so a user, or a trusted project's .env per source, can set GEMINI_SANDBOX=false. A project can supply its own seatbelt profile or sandbox.Dockerfile. Sandbox expansion prompts can widen access. Docs warn the sandbox reduces but does not remove risk.",
+          "limits": "Off by default. The configuration reference says YOLO enables the sandbox by default, but in v0.63.0 sandboxConfig.ts nothing turns it on for yolo (source-checked). Env overrides settings, so a user, or a trusted project's .env (according to the source code), can set GEMINI_SANDBOX=false. A project can supply its own seatbelt profile or sandbox.Dockerfile. Sandbox expansion prompts can widen access. Docs warn the sandbox reduces but does not remove risk.",
           "evidence": [
             {
               "source": "https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/reference/configuration.md",
@@ -1740,7 +1745,7 @@
             "--allowed-mcp-server-names",
             "remote admin controls"
           ],
-          "limits": "Local allowlisting is by name only; the command or URL is whatever the winning config defines. mcp.allowed has no merge strategy, so a later scope replaces it: a trusted project overrides the user's list and only the system file is authoritative. Per source, mcp.allowed also adds an ALLOW policy rule for every tool of the listed servers (auto-approval, not just permission to start). Untrusted folders connect to no MCP servers.",
+          "limits": "Local allowlisting is by name only; the command or URL is whatever the winning config defines. mcp.allowed has no merge strategy, so a later scope replaces it: a trusted project overrides the user's list and only the system file is authoritative. In the source code, mcp.allowed also adds an ALLOW policy rule for every tool of the listed servers (auto-approval, not just permission to start). Untrusted folders connect to no MCP servers.",
           "evidence": [
             {
               "source": "https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/cli/enterprise.md",
@@ -1790,7 +1795,7 @@
             "project settings (trusted folders only)",
             "extensions"
           ],
-          "limits": "BeforeTool runs before the policy check and cannot grant approval; an 'allow' is a no-op, and the policy check still runs on the possibly-rewritten args. Exit codes other than 0/2, or non-JSON stdout, fail open (tool proceeds). Per source, in an untrusted folder all settings-defined hooks are skipped, including user and system ones (they are processed as 'Project' source). Project hooks are 'fingerprinted', but the code only warns and then auto-trusts them; it does not ask.",
+          "limits": "BeforeTool runs before the policy check and cannot grant approval; an 'allow' is a no-op, and the policy check still runs on the possibly-rewritten args. Exit codes other than 0/2, or non-JSON stdout, fail open (tool proceeds). In the source code, in an untrusted folder all settings-defined hooks are skipped, including user and system ones (they are processed as 'Project' source). Project hooks are 'fingerprinted', but the code only warns and then auto-trusts them; it does not ask.",
           "evidence": [
             {
               "source": "https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/hooks/reference.md",
@@ -1850,7 +1855,7 @@
             "IDE trust signal",
             "env/flag overrides"
           ],
-          "limits": "Once trusted, the repo's settings merge above user settings. Can a repo weaken safety? It cannot select yolo (defaultApprovalMode=yolo is ignored), and workspace policy TOMLs are disabled in code. It CAN: set auto_edit; auto-approve tools via tools.allowed (warned), mcpServers.<x>.trust or mcp.allowed (not warned); replace the user's tools.allowed/tools.core/mcp.allowed arrays; add MCP servers and hooks that run commands at startup; set .env values such as GEMINI_SANDBOX=false (source-inferred). On installed 0.22.2, folder trust is off by default, so all of this applies with no prompt.",
+          "limits": "Once trusted, the repo's settings merge above user settings. Can a repo weaken safety? It cannot select yolo (defaultApprovalMode=yolo is ignored), and workspace policy TOMLs are disabled in code. It CAN: set auto_edit; auto-approve tools via tools.allowed (warned), mcpServers.<x>.trust or mcp.allowed (not warned); replace the user's tools.allowed/tools.core/mcp.allowed arrays; add MCP servers and hooks that run commands at startup; set .env values such as GEMINI_SANDBOX=false (from the source code, not tested). In older releases such as 0.22.2, folder trust is off by default, so all of this applies with no prompt.",
           "evidence": [
             {
               "source": "google-gemini/gemini-cli@573846625af9 packages/cli/src/config/trustedFolders.ts#L33",
@@ -2009,7 +2014,7 @@
           ]
         },
         "deny_commands": {
-          "support": "yes",
+          "support": "partial",
           "how": "permission.bash pattern -> \"deny\", e.g. {\"permission\":{\"bash\":{\"rm *\":\"deny\",\"git push *\":\"deny\"}}}. A deny returns an error to the model immediately.",
           "scopes": [
             "global",
@@ -2104,7 +2109,7 @@
             "remote org config",
             "env"
           ],
-          "limits": "Defaults: `*.env` and `*.env.*` reads ASK (the docs say 'denied by default'; v1.19.0 and installed 1.18.19 source/binary use ask). The read permission does not stop shell reads: `cat .env` is a bash permission check. The shell's external_directory check covers only file arguments of a fixed command list (cd, rm, cp, mv, mkdir, touch, chmod, chown, cat, PowerShell *-Item/*-Content). Commands like `head ~/.ssh/id_rsa`, `less`, `python -c`, or redirections are not path-checked (source). Per source, `read` patterns are relative paths, so a `~/.ssh/*` pattern under `read` would not match; use external_directory instead (inferred, not tested).",
+          "limits": "Defaults: `*.env` and `*.env.*` reads ASK (the docs say 'denied by default'; v1.19.0 and installed 1.18.19 source/binary use ask). The read permission does not stop shell reads: `cat .env` is a bash permission check. The shell's external_directory check covers only file arguments of a fixed command list (cd, rm, cp, mv, mkdir, touch, chmod, chown, cat, PowerShell *-Item/*-Content). Commands like `head ~/.ssh/id_rsa`, `less`, `python -c`, or redirections are not path-checked (source). In the source code, `read` patterns are relative paths, so a `~/.ssh/*` pattern under `read` would not match; use external_directory instead (inferred, not tested).",
           "evidence": [
             {
               "source": "anomalyco/opencode@733b2c627e5a packages/opencode/src/agent/agent.ts#L130-L134",
@@ -2139,7 +2144,7 @@
             "remote org config",
             "env"
           ],
-          "limits": "Covers the edit/write/apply_patch tools. Shell writes are only covered by bash rules and the partial external_directory scan (e.g. `echo x > ~/.bashrc` is not path-checked per source). There is no OS-level enforcement. external_directory defaults to ask, and --auto approves it.",
+          "limits": "Covers the edit/write/apply_patch tools. Shell writes are only covered by bash rules and the partial external_directory scan (e.g. `echo x > ~/.bashrc` is not path-checked, according to the source code). There is no OS-level enforcement. external_directory defaults to ask, and --auto approves it.",
           "evidence": [
             {
               "source": "https://github.com/anomalyco/opencode/blob/v1.19.0/packages/web/src/content/docs/permissions.mdx",
@@ -2230,7 +2235,7 @@
             "managed files",
             "macOS MDM"
           ],
-          "limits": "Auto mode is a client behaviour (auto-replying 'once'), so admins cannot turn it off. Admins can only convert critical rules to deny. Even then, per source, OPENCODE_PERMISSION is merged after managed config (user-overridable), and a key-ordering quirk lets later-appended wildcard keys outrank managed rules (see managed_policy).",
+          "limits": "Auto mode is a client behaviour (auto-replying 'once'), so admins cannot turn it off. Admins can only convert critical rules to deny. Even then, the source code shows that OPENCODE_PERMISSION is merged after managed config (user-overridable), and a key-ordering quirk lets later-appended wildcard keys outrank managed rules (see managed_policy).",
           "evidence": [
             {
               "source": "anomalyco/opencode@733b2c627e5a packages/opencode/src/cli/cmd/run.ts#L242-L245",
@@ -3649,6 +3654,11 @@
             {
               "source": "https://docs.github.com/en/copilot/reference/hooks-reference",
               "url": "https://docs.github.com/en/copilot/reference/hooks-reference",
+              "quote": "Command `preToolUse` hooks are **fail-closed** on errors—a crash or non-zero exit (including exit `2`) denies the tool call"
+            },
+            {
+              "source": "https://docs.github.com/en/copilot/reference/hooks-reference",
+              "url": "https://docs.github.com/en/copilot/reference/hooks-reference",
               "quote": "Policy hooks are machine-wide and load before all other hooks. They cannot be disabled by `disableAllHooks` and are available regardless of folder trust state."
             },
             {
@@ -4131,7 +4141,7 @@
           ]
         },
         "bypass_lockout": {
-          "support": "yes",
+          "support": "partial",
           "how": {
             "cascade": "Team setting 'Maximum autonomy level' (Teams & Enterprise). Members can choose any level up to the max. For example, max 'Auto' makes Turbo unavailable. 'Enable Cascade' (Enterprise) can disable Cascade entirely.",
             "devin_local": "No toggle to disable Bypass is documented. Admins instead enforce org deny/ask rules (active in all modes) and can make the sandbox Required, which leaves Autonomous as the only permission mode (Bypass hidden)."
@@ -4140,6 +4150,7 @@
             "team_admin"
           ],
           "limits": [
+            "No documented toggle turns Bypass off in Devin Local. Making the sandbox Required hides it, leaving Autonomous as the only mode.",
             "'Maximum autonomy level' applies to Cascade only. Devin Local uses 'Devin CLI permissions'.",
             "On Team plans Devin Local is available by default. Legacy Cascade terminal controls apply to it only as a fallback when no CLI permission config exists."
           ],

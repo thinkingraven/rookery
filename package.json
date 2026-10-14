@@ -1,6 +1,6 @@
 {
   "name": "@thinkingraven/rookery",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Find every AI agent skill in your repos, spot the duplicates teams keep rebuilding, and catch the risky ones. Claude Code, Codex, Cursor, Copilot, Gemini, Windsurf and MCP.",
   "keywords": [
     "claude-code",
