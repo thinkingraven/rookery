@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Agent } from '../types.js';
+import { VERSION } from '../version.js';
 import type { Policy } from './policy.js';
 
 /**
@@ -20,18 +21,18 @@ const BLOCK_END = '# <<< rookery';
 export const APPLY_AGENTS: Agent[] = ['claude-code', 'codex', 'gemini', 'cursor', 'copilot', 'windsurf'];
 
 type Json = Record<string, unknown>;
-interface JsonFileState { kind: 'json'; set: Record<string, unknown>; add: Record<string, string[]>; created: string[]; createdFile?: boolean }
+interface JsonFileState { kind: 'json'; set: Record<string, unknown>; add: Record<string, unknown[]>; created: string[]; createdFile?: boolean }
 interface BlockFileState { kind: 'block'; createdFile?: boolean }
 interface WholeFileState { kind: 'whole' }
 type FileState = JsonFileState | BlockFileState | WholeFileState;
-export interface ApplyState { version: 1; files: Record<string, FileState> }
+export interface ApplyState { version: 1; files: Record<string, FileState>; hookCommand?: string }
 
 export type FileStatus = 'create' | 'update' | 'delete' | 'unchanged';
 export interface FileChange { path: string; status: FileStatus; before: string | null; after: string | null; agent?: Agent; notes: string[] }
 export interface ApplyPlan { agents: Agent[]; changes: FileChange[]; conflicts: string[]; notes: string[]; state: ApplyState; applied: boolean }
 
 /** What one agent wants in its repo files. */
-interface JsonWant { kind: 'json'; path: string; set: Record<string, unknown>; add: Record<string, string[]> }
+interface JsonWant { kind: 'json'; path: string; set: Record<string, unknown>; add: Record<string, unknown[]> }
 interface BlockWant { kind: 'block'; path: string; lines: string[] }
 interface WholeWant { kind: 'whole'; path: string; content: string | null }
 type Want = (JsonWant | BlockWant | WholeWant) & { agent: Agent };
@@ -40,6 +41,52 @@ const isHome = (glob: string) => glob.startsWith('~/');
 /** never_read entries that name files inside the repo, as gitignore-style lines. */
 const repoGlobs = (p: Policy) => p.files.never_read.filter((g) => !isHome(g) && !g.startsWith('/'));
 const tokens = (prefix: string) => prefix.trim().split(/\s+/);
+
+export const HOOK_PACKAGE = '@thinkingraven/rookery';
+const PINNED_NPX = `npx -y ${HOOK_PACKAGE}@`;
+
+/** How installed hooks run rookery: the policy's runtime.command, else the npx version already installed, else this version. */
+export function hookCommand(p: Policy, prev: ApplyState | null, updateHooks = false): string {
+  if (p.runtime.command) return p.runtime.command;
+  if (!updateHooks && prev?.hookCommand?.startsWith(PINNED_NPX)) return prev.hookCommand;
+  return `${PINNED_NPX}${VERSION}`;
+}
+
+const claudeHook = (base: string) => ({ matcher: 'Bash|PowerShell|Read|Grep|Glob|mcp__.*', hooks: [{ type: 'command', command: `${base} hook claude-code`, timeout: 30, onFailure: 'block' }] });
+const CODEX_MATCHER = 'Bash|mcp__.*';
+
+/** Hook entries per agent, in each agent's own format. Verified against the agents' docs (2026-10-14). */
+function hookWants(base: string, agents: Agent[], root: string): Want[] {
+  const run = (a: string) => `${base} hook ${a}`;
+  const has = (a: Agent) => agents.includes(a);
+  const out: Want[] = [];
+  if (has('claude-code')) out.push({ agent: 'claude-code', kind: 'json', path: '.claude/settings.json', set: {}, add: { 'hooks.PreToolUse': [claudeHook(base)] } });
+  if (has('codex')) out.push({ agent: 'codex', kind: 'json', path: '.codex/hooks.json', set: {}, add: { 'hooks.PreToolUse': [{ matcher: CODEX_MATCHER, hooks: [{ type: 'command', command: run('codex'), timeout: 30, statusMessage: 'Checking rookery policy' }] }] } });
+  if (has('gemini')) out.push({ agent: 'gemini', kind: 'json', path: '.gemini/settings.json', set: {}, add: { 'hooks.BeforeTool': [{ matcher: 'run_shell_command|read_file|read_many_files|mcp_.*', hooks: [{ type: 'command', name: 'rookery', command: run('gemini'), timeout: 30000 }] }] } });
+  if (has('cursor')) {
+    const h = [{ command: run('cursor'), failClosed: true }];
+    out.push({ agent: 'cursor', kind: 'json', path: '.cursor/hooks.json', set: { version: 1 }, add: { 'hooks.beforeShellExecution': h, 'hooks.beforeReadFile': h, 'hooks.beforeMCPExecution': h } });
+  }
+  if (has('copilot')) out.push({ agent: 'copilot', kind: 'whole', path: '.github/hooks/rookery.json', content: JSON.stringify({ version: 1, hooks: { preToolUse: [{ type: 'command', bash: run('copilot'), powershell: run('copilot'), matcher: 'bash|powershell|view|grep|rg|glob', timeoutSec: 30 }] } }, null, 2) + '\n' });
+  if (has('windsurf')) {
+    // Windsurf reads the legacy .windsurf/hooks.json only while .devin/hooks.json is absent, so keep using it if it's there.
+    const path = existsSync(join(root, '.windsurf/hooks.json')) && !existsSync(join(root, '.devin/hooks.json')) ? '.windsurf/hooks.json' : '.devin/hooks.json';
+    const h = [{ command: run('windsurf') }];
+    out.push({ agent: 'windsurf', kind: 'json', path, set: {}, add: { 'hooks.pre_run_command': h, 'hooks.pre_read_code': h, 'hooks.pre_mcp_tool_use': h } });
+  }
+  return out;
+}
+
+/** Wants for the same file are merged, so settings and hooks for one agent land in one change. */
+function mergeWants(list: Want[]): Want[] {
+  const out: Want[] = [];
+  for (const w of list) {
+    const prev = out.find((x) => x.path === w.path);
+    if (prev && prev.kind === 'json' && w.kind === 'json') { Object.assign(prev.set, w.set); for (const [k, v] of Object.entries(w.add)) prev.add[k] = [...(prev.add[k] ?? []), ...v]; }
+    else out.push(w);
+  }
+  return out;
+}
 
 function wants(p: Policy, agents: Agent[]): Want[] {
   const out: Want[] = [];
@@ -122,7 +169,7 @@ function planJson(root: string, want: JsonWant, prev: JsonFileState | undefined,
     for (const [k, v] of Object.entries(prev.set)) if (same(getAt(doc, k), v)) deleteAt(doc, k);
     for (const [k, vals] of Object.entries(prev.add)) {
       const arr = getAt(doc, k);
-      if (Array.isArray(arr)) { const left = arr.filter((x) => !vals.includes(x as string)); if (left.length) setAt(doc, k, left); else deleteAt(doc, k); }
+      if (Array.isArray(arr)) { const left = arr.filter((x) => !vals.some((v) => same(v, x))); if (left.length) setAt(doc, k, left); else deleteAt(doc, k); }
     }
     for (const k of [...prev.created].sort((a, b) => b.length - a.length)) { const v = getAt(doc, k); if (v && typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length) deleteAt(doc, k); }
   }
@@ -134,9 +181,9 @@ function planJson(root: string, want: JsonWant, prev: JsonFileState | undefined,
   }
   for (const [k, vals] of Object.entries(want.add)) {
     const cur = getAt(doc, k);
-    if (cur !== undefined && !Array.isArray(cur)) { conflicts.push(`${want.path}: ${k} is not a list, so rookery can't add ${vals.join(', ')}.`); continue; }
+    if (cur !== undefined && !Array.isArray(cur)) { conflicts.push(`${want.path}: ${k} is not a list, so rookery can't add ${vals.map((v) => (typeof v === 'string' ? v : JSON.stringify(v))).join(', ')}.`); continue; }
     const arr = (cur as unknown[] | undefined) ?? [];
-    const added = vals.filter((v) => !arr.includes(v));
+    const added = vals.filter((v) => !arr.some((x) => same(x, v)));
     if (!added.length) continue;
     if (cur === undefined) state.created.push(...setAt(doc, k, [...added]));
     else setAt(doc, k, [...arr, ...added]);
@@ -183,11 +230,12 @@ export function readState(root: string): ApplyState | null {
 }
 
 /** Plan the changes `apply` would make. Nothing is written. */
-export function planApply(root: string, policy: Policy, found: Agent[]): ApplyPlan {
+export function planApply(root: string, policy: Policy, found: Agent[], opts: { updateHooks?: boolean } = {}): ApplyPlan {
   const prevState = readState(root);
   const agents = APPLY_AGENTS.filter((a) => (policy.agents ? policy.agents.includes(a) : found.includes(a)));
   const conflicts: string[] = [];
-  const state: ApplyState = { version: 1, files: {} };
+  const base = policy.runtime.hooks ? hookCommand(policy, prevState, opts.updateHooks) : null;
+  const state: ApplyState = { version: 1, files: {}, ...(base ? { hookCommand: base } : {}) };
   const changes: FileChange[] = [];
   const touched = new Set<string>();
   const record = (path: string, agent: Agent | undefined, after: string | null, notes: string[] = []) => {
@@ -198,7 +246,7 @@ export function planApply(root: string, policy: Policy, found: Agent[]): ApplyPl
     changes.push({ path, status, before, after, agent, notes });
   };
 
-  for (const w of wants(policy, agents)) {
+  for (const w of mergeWants([...wants(policy, agents), ...(base ? hookWants(base, agents, root) : [])])) {
     const prev = prevState?.files[w.path];
     if (w.kind === 'json') { const r = planJson(root, w, prev?.kind === 'json' ? prev : undefined, conflicts); if (r.state) state.files[w.path] = r.state; record(w.path, w.agent, r.after); }
     else if (w.kind === 'block') { const r = planBlock(root, w, prev?.kind === 'block' ? prev : undefined); if (r.state) state.files[w.path] = r.state; record(w.path, w.agent, r.after); }
@@ -211,10 +259,16 @@ export function planApply(root: string, policy: Policy, found: Agent[]): ApplyPl
     else if (prev.kind === 'block') { const r = planBlock(root, { kind: 'block', path, lines: [] }, prev); record(path, undefined, r.after); }
     else record(path, undefined, null);
   }
-  record(ADMIN_FILE, undefined, adminGuide(policy, agents));
+  record(ADMIN_FILE, undefined, adminGuide(policy, agents, base));
   const notes: string[] = [];
   if (policy.mcp.unlisted === 'forbid' && !policy.mcp.allow.length && agents.some((a) => a === 'claude-code' || a === 'gemini')) {
     notes.push('mcp.allow is empty and mcp.unlisted is forbid, so this blocks every MCP server in this repo for Claude Code and Gemini CLI. List the servers you use under mcp.allow, or set mcp.unlisted: allow.');
+  }
+  if (base && agents.length) {
+    if (base.startsWith(PINNED_NPX) && base !== `${PINNED_NPX}${VERSION}`) notes.push(`Hooks run ${base.slice('npx -y '.length)}; this is ${VERSION}. To move them, run \`rookery policy apply --write --update-hooks\`.`);
+    const changedFile = (path: string) => changes.some((c) => c.path === path && c.status !== 'unchanged');
+    const trust = [changedFile('.codex/hooks.json') && 'Codex runs project hooks only after you trust them in /hooks', changedFile('.gemini/settings.json') && 'Gemini CLI asks before it runs a new or changed project hook'].filter(Boolean);
+    if (trust.length) notes.push(`${trust.join('; ')}.`);
   }
   // Always recorded on apply, so `check` knows this repo uses apply and can report drift.
   record(STATE_FILE, undefined, JSON.stringify(state, null, 2) + '\n');
@@ -234,7 +288,7 @@ export function writePlan(root: string, plan: ApplyPlan): number {
 }
 
 /** Settings that only an admin can make binding, per agent in scope. */
-export function adminGuide(p: Policy, agents: Agent[]): string {
+export function adminGuide(p: Policy, agents: Agent[], hookBase: string | null = null): string {
   const deny = p.shell.deny;
   const reads = p.files.read_secrets === 'allow' ? [] : p.files.never_read;
   const bypass = p.approvals.bypass === 'forbid';
@@ -296,8 +350,16 @@ export function adminGuide(p: Policy, agents: Agent[]): string {
     const steps: string[] = [];
     if (bypass) steps.push('- Team settings → Maximum autonomy level: below Turbo.');
     if (mcp) steps.push(`- Team settings → MCP allowlist: ${mcp.map((m) => `\`${m}\``).join(', ') || '(empty: no servers)'}.`);
-    if (deny.length) steps.push('- Cascade has no hard command deny list. Block commands with a `pre_run_command` hook that exits with code 2.');
+    if (deny.length && !hookBase) steps.push('- Cascade has no hard command deny list. Block commands with a `pre_run_command` hook that exits with code 2, or set `runtime.hooks: true` in .rookery.yml.');
     section('Windsurf', steps);
+  }
+  if (hookBase) {
+    const body: string[] = [];
+    if (agents.includes('claude-code')) body.push('**Claude Code:** add this to `managed-settings.json` or the claude.ai admin console. Adding `"allowManagedHooksOnly": true` also stops user and project hooks from running.', '', ...json({ hooks: { PreToolUse: [claudeHook(hookBase)] } }), '');
+    if (agents.includes('codex')) body.push('**Codex:** add this to `requirements.toml`. Managed hooks need no trust review.', '', '```toml', '[features]', 'hooks = true', '', '[[hooks.PreToolUse]]', `matcher = ${JSON.stringify(CODEX_MATCHER)}`, '', '[[hooks.PreToolUse.hooks]]', 'type = "command"', `command = ${JSON.stringify(`${hookBase} hook codex`)}`, 'timeout = 30', '```', '');
+    if (agents.includes('copilot')) body.push('**GitHub Copilot:** copy `.github/hooks/rookery.json` to `/etc/github-copilot/policy.d/rookery.json` (Linux, macOS; owned by root, not group- or world-writable) or `C:\\ProgramData\\GitHub\\Copilot\\policy.d\\rookery.json` (Windows). Policy hooks load first, and `disableAllHooks` doesn\'t turn them off.', '');
+    if (agents.includes('windsurf')) body.push('**Windsurf:** copy the hooks from the repo\'s hooks file into the system `hooks.json`: `/Library/Application Support/Devin/hooks.json` (macOS), `/etc/devin/hooks.json` (Linux, WSL) or `C:\\ProgramData\\Devin\\hooks.json` (Windows), or set them in the cloud dashboard.', '');
+    if (body.length) section('Runtime hook', ['`apply` installed the hook in the repo, so anyone who can edit the repo can take it out. To make it binding, deliver the same hook as an admin.', '', ...body.slice(0, -1)]);
   }
   if (out.length === 6) out.push('Nothing in this policy needs an admin setting for the agents in this repo.', '');
   return out.join('\n');

@@ -195,8 +195,9 @@ flowchart LR
 ## Privacy
 
 - Runs entirely on your machine and makes no network requests.
-- Reads files; never executes, modifies or uploads them.
+- Reads files; never executes or uploads them. It changes agent configs only when you run `policy apply --write`, after showing you the diff.
 - Reports mask secrets; the JSON report omits file contents.
+- `rookery hook` keeps its decision log on your machine, in `~/.rookery/decisions/`. Its default command uses `npx`, which downloads the pinned rookery version from npm once.
 
 ## FAQ
 
@@ -251,6 +252,7 @@ exceptions:
 - **In CI:** the GitHub Action runs `check` automatically when the repo has a `.rookery.yml`.
 - **For each setting:** it also prints whether each agent in the repo can enforce that rule itself, from the capability matrix.
 - **`rookery policy apply --write`:** writes the policy into each agent's own config: Claude Code settings, Codex rules, Gemini CLI settings, Cursor CLI permissions and ignore files. Admin-only settings go to `.rookery/ADMIN.md`. It only adds and later removes its own values, and `check` reports drift when the configs fall out of date.
+- **`runtime: { hooks: true }`:** `apply` also installs `rookery hook` in each agent. It checks every shell command, file read and MCP call against the policy while the agent runs, and blocks what the policy forbids, such as `rm -rf`, `cat ~/.ssh/id_rsa`, or an MCP server that isn't on the allow-list. Blocks and warnings are logged locally in `~/.rookery/decisions/`.
 
 Full reference: [docs/policy.md](docs/policy.md).
 
@@ -261,7 +263,6 @@ Full reference: [docs/policy.md](docs/policy.md).
 ## Roadmap
 
 - `--github-org <org>` to scan an organisation without cloning by hand
-- A fail-closed pre-tool-use hook that enforces `.rookery.yml` while agents run, and logs decisions locally
 - Match local skills against well-known public skills
 - A registry to publish, review, distribute and measure the skills rookery finds
 

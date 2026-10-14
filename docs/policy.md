@@ -34,6 +34,10 @@ files:
 
 drift: warn                # agent configs out of date with the policy, once `policy apply` is used
 
+runtime:
+  hooks: true              # `policy apply` installs `rookery hook`, which checks calls while agents run
+  command: rookery         # optional: how hooks run rookery (default: npx -y @thinkingraven/rookery@<version>)
+
 agents: [claude-code, cursor]   # optional: only judge these agents' files
 
 exceptions:
@@ -137,6 +141,8 @@ npx @thinkingraven/rookery policy apply --write   # writes the files; commit the
 | Windsurf | `.devinignore` for in-repo `never_read` paths |
 | GitHub Copilot | nothing: a repo can't enforce these for Copilot (VS Code's `false` terminal rules only prompt) |
 
+With `runtime.hooks: true`, `apply` also installs the runtime hook in each agent. See the next section.
+
 **What only an admin can enforce** goes into `.rookery/ADMIN.md`, regenerated on every apply, with the exact snippet per agent:
 - Claude Code: `managed-settings.json`;
 - Codex: `requirements.toml` (`allowed_approval_policies`, `allowed_sandbox_modes`, `deny_read`, `prefix_rules`);
@@ -155,6 +161,62 @@ Codex permission profiles are beta, and Codex ignores them when any config sets 
 - **Clean removal.** When the policy no longer needs something, `apply` takes it back out. Files it created are deleted once empty.
 
 After the first `--write`, `check` reports drift (`RK-POL-007`) whenever the configs fall out of date with `.rookery.yml`.
+
+## `rookery hook`: enforce the policy while agents run
+
+`apply` writes the rules each agent can express in its own config. The runtime hook covers the rest: every shell command, file read and MCP call goes through `rookery hook` before the agent runs it, and the hook blocks what `.rookery.yml` forbids. It works the same way in every agent, so one policy gives the same answers in Claude Code, Codex, Gemini CLI, Cursor, Copilot and Windsurf.
+
+```yaml
+# .rookery.yml
+runtime:
+  hooks: true
+```
+
+```bash
+npx @thinkingraven/rookery policy apply --write   # installs the hook; commit the files
+```
+
+**What it checks**
+
+| Setting | Blocked while the agent runs |
+|---|---|
+| `shell.deny` | A command that starts with a listed prefix, anywhere in the command line: after `&&`, `;` or `\|`, inside `$(…)` or `sh -c '…'`, after `sudo` or `env`, or run by its full path (`/bin/rm -rf`). |
+| `approvals.bypass` | Starting another agent with its approvals or sandbox off, such as `claude --dangerously-skip-permissions`, `codex --dangerously-bypass-approvals-and-sandbox`, `gemini -y`, or `copilot --allow-all-tools`. |
+| `files.read_secrets` | A shell command that reads a `files.never_read` path or a credential file (`cat ~/.ssh/id_rsa`, `source .env`, `security find-generic-password -w`). The same goes for the agent's own file tools (Read, Grep, `read_file`, `view` and so on). Writing to `.env` and reading public keys are fine. |
+| `mcp.unlisted` | A call to an MCP server that isn't in `mcp.allow`. |
+
+- `forbid` blocks the call. The agent sees the reason, for example `rookery policy (shell.deny): \`rm -rf\` is not allowed in this repo.`
+- `warn` lets the call through and logs it.
+- `allow` ignores it.
+
+Exceptions don't apply here: they cover files in the repo, not live calls.
+
+**What each agent gets**
+
+| Agent | Where the hook goes | Calls it sees | If the hook can't run at all |
+|---|---|---|---|
+| Claude Code | `.claude/settings.json`: `hooks.PreToolUse` | Bash, PowerShell, Read, Grep, Glob, MCP | The call is blocked (`onFailure: "block"`, Claude Code 2.1.295 or later) |
+| Codex | `.codex/hooks.json`: `PreToolUse` | shell, MCP | The call goes through. Codex runs project hooks only after you trust them in `/hooks`. |
+| Gemini CLI | `.gemini/settings.json`: `hooks.BeforeTool` | `run_shell_command`, `read_file`, `read_many_files`, MCP | The call goes through, with a warning. Gemini asks before it runs a new or changed project hook. |
+| Cursor | `.cursor/hooks.json`: `beforeShellExecution`, `beforeReadFile`, `beforeMCPExecution` | shell, file reads, MCP | The call is blocked (`failClosed: true`) |
+| GitHub Copilot | `.github/hooks/rookery.json`: `preToolUse` | `bash`, `powershell`, `view`, `grep`, `rg`, `glob` | The call is blocked if the hook crashes. A timeout lets it through. |
+| Windsurf | `.devin/hooks.json` (or `.windsurf/hooks.json` if the repo already uses it): `pre_run_command`, `pre_read_code`, `pre_mcp_tool_use` | shell, file reads, MCP | The call goes through |
+
+`apply` adds its hook next to any hooks you already have, and takes only its own entry back out when you turn `runtime.hooks` off.
+
+**Make it binding.** Anyone who can edit the repo can take the hook out. `ADMIN.md` gets a "Runtime hook" section with the same hook for Claude Code managed settings, Codex `requirements.toml`, Copilot policy hooks and Windsurf system hooks.
+
+**Fail closed.** If the hook gets input it can't read, or `.rookery.yml` is invalid, it blocks the call and says why. Whether a hook that can't start at all blocks the call is up to each agent, as the table shows.
+
+**Which policy.** The hook uses the `.rookery.yml` of the project the agent has open (from `CLAUDE_PROJECT_DIR`, `GEMINI_PROJECT_DIR` or `CURSOR_PROJECT_DIR`), so a policy file somewhere else can't loosen it. Otherwise it uses the nearest `.rookery.yml` at or above the call's folder, stopping at the repo root. With no policy it has no opinion. `rookery hook <agent> --policy <file>` names the file outright.
+
+**Speed.** By default the hooks run `npx -y @thinkingraven/rookery@<version>`, pinned to the version that installed them. npx adds about half a second to every checked call; rookery itself takes about 50 ms. To make it faster, install rookery (`npm i -g @thinkingraven/rookery`) and set `runtime.command: rookery`.
+
+**Upgrades.** `apply` keeps the pinned version, so a newer rookery in CI doesn't report drift. To move the hooks to the version you're running, use `rookery policy apply --write --update-hooks`.
+
+**Decision log.** Each block or warning is appended to `~/.rookery/decisions/YYYY-MM-DD.jsonl`, on your machine. A line holds the time, agent, kind of call, decision, rule, setting, the repo folder name, and a short subject: the first words of the command or the matched glob, with your home folder shown as `~` and long tokens cut short. `ROOKERY_HOME` moves the log; `ROOKERY_HOOK_LOG=0` turns it off.
+
+**Limits.** The hook is a guardrail, not a sandbox. It reads command text, so a process set on getting around it can: a script that reads the file itself, a variable that holds the path, a command it doesn't recognise. Use it together with what `apply` writes into each agent's own config, the agent's sandbox, and the admin settings in `ADMIN.md`. Cursor doesn't document whether a hook's `allow` also skips Cursor's own approval prompt. rookery answers `allow` when it has no objection, as Cursor's examples do.
 
 ## Can the agents enforce it themselves?
 
