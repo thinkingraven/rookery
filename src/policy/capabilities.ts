@@ -49,7 +49,7 @@ export const AGENT_SUPPORT: Record<string, { name: string; support: Record<strin
     "name": "Gemini CLI",
     "support": {
       "allow_commands": "yes",
-      "deny_commands": "yes",
+      "deny_commands": "partial",
       "ask_commands": "yes",
       "tool_rules": "yes",
       "file_read_deny": "partial",
@@ -70,7 +70,7 @@ export const AGENT_SUPPORT: Record<string, { name: string; support: Record<strin
     "name": "OpenCode",
     "support": {
       "allow_commands": "yes",
-      "deny_commands": "yes",
+      "deny_commands": "partial",
       "ask_commands": "partial",
       "tool_rules": "yes",
       "file_read_deny": "partial",
@@ -141,7 +141,7 @@ export const AGENT_SUPPORT: Record<string, { name: string; support: Record<strin
       "network_control": "partial",
       "sandbox": "partial",
       "approval_modes": "yes",
-      "bypass_lockout": "yes",
+      "bypass_lockout": "partial",
       "mcp_server_allowlist": "yes",
       "mcp_tool_rules": "partial",
       "hooks_blocking": "yes",

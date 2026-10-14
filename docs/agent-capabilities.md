@@ -14,12 +14,13 @@ Seven coding agents, checked against the same 16 questions on 13 October 2026: w
    - **No trust check in Claude Code's `-p` (headless) mode:** a repo's hooks and `.mcp.json` servers run even in a folder you've never trusted.
    - **After trust, a repo can turn approvals off in Codex:** `approval_policy = "never"` plus `sandbox_mode = "danger-full-access"`. Since 0.147.0, some Codex flows record a project as trusted without a prompt.
    - **After trust, a repo can't turn on bypass or yolo mode in Claude Code, Gemini CLI or Copilot CLI**, though in most agents it can still pre-approve commands or tools and add MCP servers and hooks.
-2. **"Deny" often means "ask", and command rules match text.**
+2. **"Deny" often means "ask", and every agent's command rules match text.**
    - VS Code's `false` terminal rules and Windsurf Cascade's deny list only force a prompt, and "Allow all" skips it.
-   - Claude Code, Codex, Cursor and Copilot match command text or prefixes, so a wrapper or a different spelling can get round a deny rule.
-3. **Read denies rarely stop `cat`.**
+   - All seven match command text, prefixes or patterns, so a wrapper, an absolute path or another interpreter can get round a deny rule. That's why every agent is rated partial here. Pair deny rules with the OS sandbox.
+3. **Read denies mostly cover the agent's own read tools, not the shell.**
    - **With the OS sandbox on, shell reads are stopped too:** Codex (whose permission profiles are enforced by its sandbox), Claude Code and Copilot.
-   - **Without a sandbox, the rules cover only the agent's own read tool:** Gemini CLI's ignore files, `.cursorignore`, OpenCode's `read` rules and Windsurf's `.devinignore`.
+   - **Claude Code without the sandbox:** a Read deny also stops the file commands it recognises (`cat`, `head`, `tail`, `sed`, `tee`) and `<` redirects, but not `grep -r` or a script that opens the file itself.
+   - **Rules that don't reach the terminal:** Gemini CLI's ignore files, OpenCode's `read` rules, Windsurf's `.devinignore`, and `.cursorignore`. Cursor's sandbox limits reads outside the workspace, not secrets inside it.
 4. **Sandboxes exist almost everywhere but are mostly off by default.**
    - **On by default:** Codex, and Cursor's Auto-review mode, which sandboxes commands that aren't on the allow-list.
    - **Off by default:** Claude Code, Gemini CLI and Copilot.
@@ -31,17 +32,22 @@ Seven coding agents, checked against the same 16 questions on 13 October 2026: w
    - **Windsurf:** caps Cascade only.
    - **Gemini CLI:** its system settings path can be repointed with an environment variable.
    - **OpenCode:** can't turn off `--auto`.
-6. **Hooks are the one control every agent has, and the command-based ones fail open.**
-   - All seven can block a tool call before it runs. OpenCode does it with in-process plugins instead of hook commands.
-   - In the other six, a hook that crashes or times out lets the call through by default. Claude Code added `onFailure: "block"` in 2.1.295.
-7. **No agent keeps a complete local record of permission decisions.** Every audit-log entry below is partial.
+6. **Every agent can block a tool call with a hook, but most hooks fail open by default.**
+   - All seven can block a call before it runs. OpenCode does it with in-process plugins instead of hook commands.
+   - **Fail open, with no documented way to change it:** in Codex, Gemini CLI and Windsurf, a hook that crashes or times out lets the call through.
+   - **Fail open unless you opt in:** Claude Code (`onFailure: "block"`, 2.1.295 and later) and Cursor (`failClosed: true`).
+   - **Copilot:** a command hook that crashes or exits non-zero blocks the call, but a timeout lets it through.
+7. **No agent keeps a tamper-resistant local record of every permission decision.**
+   - **Claude Code, Codex, Gemini CLI and Copilot** record decisions only once OpenTelemetry is turned on. Gemini CLI can write it to a local file.
+   - **OpenCode** logs every permission check by default, in user-writable files of which only the 10 newest are kept.
+   - **Cursor and Windsurf:** a post-tool hook is the documented way to build a record. Their admin audit logs don't cover agent tool calls.
 
 ## The matrix
 
 | | Claude Code | Codex CLI | Gemini CLI | OpenCode | Cursor | GitHub Copilot | Windsurf (Devin Desktop) |
 |---|---|---|---|---|---|---|---|
 | [Allow commands](#allow-commands) | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes |
-| [Deny commands](#deny-commands) | 🟡 partial | 🟡 partial | ✅ yes | ✅ yes | 🟡 partial | 🟡 partial | 🟡 partial |
+| [Deny commands](#deny-commands) | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial |
 | [Always ask for commands](#always-ask-for-commands) | ✅ yes | ✅ yes | ✅ yes | 🟡 partial | 🟡 partial | 🟡 partial | ✅ yes |
 | [Rules for other tools](#rules-for-other-tools) | ✅ yes | 🟡 partial | ✅ yes | ✅ yes | 🟡 partial | ✅ yes | 🟡 partial |
 | [Deny file reads](#deny-file-reads) | ✅ yes | ✅ yes | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial |
@@ -49,7 +55,7 @@ Seven coding agents, checked against the same 16 questions on 13 October 2026: w
 | [Network control](#network-control) | ✅ yes | ✅ yes | 🟡 partial | 🟡 partial | 🟡 partial | ✅ yes | 🟡 partial |
 | [OS sandbox](#os-sandbox) | ✅ yes | ✅ yes | ✅ yes | ❌ no | ✅ yes | ✅ yes | 🟡 partial |
 | [Approval modes](#approval-modes) | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes |
-| [Lock out bypass modes](#lock-out-bypass-modes) | ✅ yes | ✅ yes | 🟡 partial | ❌ no | ✅ yes | ✅ yes | ✅ yes |
+| [Lock out bypass modes](#lock-out-bypass-modes) | ✅ yes | ✅ yes | 🟡 partial | ❌ no | ✅ yes | ✅ yes | 🟡 partial |
 | [MCP server allow-list](#mcp-server-allow-list) | ✅ yes | ✅ yes | ✅ yes | 🟡 partial | ✅ yes | ✅ yes | ✅ yes |
 | [MCP tool rules](#mcp-tool-rules) | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | 🟡 partial |
 | [Blocking hooks](#blocking-hooks) | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes | ✅ yes |
@@ -57,7 +63,7 @@ Seven coding agents, checked against the same 16 questions on 13 October 2026: w
 | [Repo config and trust](#repo-config-and-trust) | 🟡 partial | 🟡 partial | ✅ yes | ❌ no | 🟡 partial | ✅ yes | 🟡 partial |
 | [Audit log](#audit-log) | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial | 🟡 partial |
 
-Legend: ✅ yes supported as described · 🟡 partial supported with important gaps (see limits) · ❌ no not supported · ❔ unknown no evidence either way. "Partial" always comes with limits, listed under each capability.
+Legend: ✅ yes supported as described · 🟡 partial supported with important gaps (see limits) · ❌ no not supported. "Partial" always comes with limits, listed under each capability.
 
 ## Versions checked
 
@@ -97,7 +103,7 @@ Pre-approve specific shell commands so the agent runs them without asking.
 
 **Gemini CLI**
 
-- Granularity is prefix (word boundary) or regex. Chained commands (&&, ||, ;, pipes) are split and every part must be allowed, and bash -c wrappers are unwrapped. Redirection (>, >>, <) downgrades allow to ask unless the rule sets allowRedirection=true. If parsing fails, the default (ask, or deny when headless) applies. Per source, a narrowed tools.allowed entry such as run_shell_command(git) also adds a DENY rule just below it for every other shell command ('Narrowing Enforcement'), so other commands are blocked rather than prompted. This was not tested.
+- Granularity is prefix (word boundary) or regex. Chained commands (&&, ||, ;, pipes) are split and every part must be allowed, and bash -c wrappers are unwrapped. Redirection (>, >>, <) downgrades allow to ask unless the rule sets allowRedirection=true. If parsing fails, the default (ask, or deny when headless) applies. In the source code, a narrowed tools.allowed entry such as run_shell_command(git) also adds a DENY rule just below it for every other shell command ('Narrowing Enforcement'), so other commands are blocked rather than prompted. This was not tested.
 
 **OpenCode**
 
@@ -134,8 +140,8 @@ Block specific shell commands outright.
 |---|---|---|---|
 | Claude Code | 🟡 partial | permissions.deny with Bash(...) rules, or --disallowedTools for one session. Example: {"permissions": {"deny": ["Bash(git push *)", "Bash(curl *)"]}}. A bare `Bash` deny removes the tool entirely. | [1](https://code.claude.com/docs/en/permission-modes#available-modes) [2](https://code.claude.com/docs/en/permissions#settings-precedence) [3](https://code.claude.com/docs/en/permissions#bash-rule-limits) |
 | Codex CLI | 🟡 partial | prefix_rule(pattern = ["rm"], decision = "forbidden", justification = "Use git clean -fd instead.") in a .rules file, or admin-enforced in requirements.toml: [rules] prefix_rules = [{ pattern = [{ token = "rm" }], decision = "forbidden" }]. Most restrictive decision wins (forbidden > prompt > allow). | [1](https://learn.chatgpt.com/docs/agent-configuration/rules) [2](https://github.com/openai/codex/blob/044e74fef3d1af2b01f4375158ac1e7ad4ae17ea/codex-rs/core/src/tools/orchestrator.rs) [3](https://learn.chatgpt.com/docs/config-file/config-reference) |
-| Gemini CLI | ✅ yes | Policy TOML rule with decision="deny" (optional denyMessage). Example in /etc/gemini-cli/policies/deny.toml: [[rule]] toolName="run_shell_command" commandPrefix="rm -rf" decision="deny" priority=900 denyMessage="blocked by IT". Deprecated: tools.exclude ["run_shell_command(rm)"]. | [1](https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/reference/policy-engine.md) [2](https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/cli/enterprise.md) [3](https://github.com/google-gemini/gemini-cli/blob/573846625af9/packages/core/src/policy/policy-engine.ts#L507-L508) |
-| OpenCode | ✅ yes | permission.bash pattern -> "deny", e.g. {"permission":{"bash":{"rm *":"deny","git push *":"deny"}}}. A deny returns an error to the model immediately. | [1](https://github.com/anomalyco/opencode/blob/733b2c627e5a/packages/opencode/src/permission/index.ts#L75-L78) [2](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/web/src/content/docs/permissions.mdx) |
+| Gemini CLI | 🟡 partial | Policy TOML rule with decision="deny" (optional denyMessage). Example in /etc/gemini-cli/policies/deny.toml: [[rule]] toolName="run_shell_command" commandPrefix="rm -rf" decision="deny" priority=900 denyMessage="blocked by IT". Deprecated: tools.exclude ["run_shell_command(rm)"]. | [1](https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/reference/policy-engine.md) [2](https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/cli/enterprise.md) [3](https://github.com/google-gemini/gemini-cli/blob/573846625af9/packages/core/src/policy/policy-engine.ts#L507-L508) |
+| OpenCode | 🟡 partial | permission.bash pattern -> "deny", e.g. {"permission":{"bash":{"rm *":"deny","git push *":"deny"}}}. A deny returns an error to the model immediately. | [1](https://github.com/anomalyco/opencode/blob/733b2c627e5a/packages/opencode/src/permission/index.ts#L75-L78) [2](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/web/src/content/docs/permissions.mdx) |
 | Cursor | 🟡 partial | ide: No user-level hard command denylist is documented for the current (3.5+) Run Modes. Hard blocks come from (a) a beforeShellExecution or preToolUse hook returning {"permission":"deny"} or exiting 2, or (b) the team admin command denylist (dashboard, Enterprise). Auto-review block_instructions only steer a classifier. · cli: permissions.deny, e.g. {"permissions": {"deny": ["Shell(rm)"]}}. Deny beats allow and bea… | [1](https://cursor.com/docs/release-notes.md) [2](https://cursor.com/docs/cli/reference/parameters.md) [3](https://cursor.com/docs/hooks.md) |
 | GitHub Copilot | 🟡 partial | vscode: A false rule in chat.tools.terminal.autoApprove only forces a prompt; it does not block. To hard-block: a PreToolUse hook returning permissionDecision 'deny' (Local harness) or the Copilot hook format (Agent Host). Agent Host sessions also honour managed permissions.deny ["Shell(rm -rf *)"]. · cli: --deny-tool='shell(git push)' (session; beats --allow-all and saved approvals). Managed permissions.deny. preTo… | [1](https://code.visualstudio.com/docs/agents/run/approvals) [2](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools) [3](https://docs.github.com/en/copilot/reference/enterprise-administrators/enterprise-managed-settings) |
 | Windsurf (Devin Desktop) | 🟡 partial | cascade: No hard deny list. The 'deny list' (user and team) only forces approval. Hard blocking needs a pre_run_command hook that exits with code 2. · devin local: permissions.deny, e.g. "Exec(rm)". Deny wins over every allow. Org deny rules cannot be overridden by project or user config and stay active in Smart, Bypass and Autonomous modes. | [1](https://docs.devin.ai/desktop/terminal.md) [2](https://docs.devin.ai/desktop/cascade/hooks.md) [3](https://docs.devin.ai/cli/reference/permissions.md) |
@@ -148,7 +154,7 @@ Block specific shell commands outright.
 
 **Codex CLI**
 
-- A forbidden match is rejected before execution with no approval prompt, so the user cannot approve it at runtime, in every approval mode including --yolo (the orchestrator rejects Forbidden before any sandbox decision). The user can still delete user/project rules, and `codex exec --ignore-rules` skips user and project .rules files (not requirements rules). Matching is argv-prefix only and is easy to sidestep with an unsplit script (e.g. a redirect inside bash -lc) or another interpreter, so the OS sandbox stays the real boundary. Applies to shell commands only. Rated partial (not yes) for consistency with the Claude Code file: the block is real and cannot be approved at runtime, but it matches argv prefixes only, so it is not a boundary on its own.
+- A forbidden match is rejected before execution with no approval prompt, so the user cannot approve it at runtime, in every approval mode including --yolo (the orchestrator rejects Forbidden before any sandbox decision). The user can still delete user/project rules, and `codex exec --ignore-rules` skips user and project .rules files (not requirements rules). Matching is argv-prefix only and is easy to sidestep with an unsplit script (e.g. a redirect inside bash -lc) or another interpreter, so the OS sandbox stays the real boundary. Applies to shell commands only.
 
 **Gemini CLI**
 
@@ -203,7 +209,7 @@ Force a prompt for specific commands, even in permissive modes.
 
 **Gemini CLI**
 
-- User and admin ask_user rules outrank the bundled YOLO allow-all (1.998), so they still prompt in yolo and auto_edit. In non-interactive (headless) mode ask_user becomes deny. tools.confirmationRequired takes plain tool names; per source it does not parse run_shell_command(args), so it cannot target specific commands. A BeforeTool hook can also force a prompt by returning decision "ask".
+- User and admin ask_user rules outrank the bundled YOLO allow-all (1.998), so they still prompt in yolo and auto_edit. In non-interactive (headless) mode ask_user becomes deny. tools.confirmationRequired takes plain tool names; the source code shows it does not parse run_shell_command(args), so it cannot target specific commands. A BeforeTool hook can also force a prompt by returning decision "ask".
 
 **OpenCode**
 
@@ -304,7 +310,7 @@ Stop the agent reading paths such as .env or ~/.ssh.
 
 **OpenCode**
 
-- Defaults: `*.env` and `*.env.*` reads ASK (the docs say 'denied by default'; v1.19.0 and installed 1.18.19 source/binary use ask). The read permission does not stop shell reads: `cat .env` is a bash permission check. The shell's external_directory check covers only file arguments of a fixed command list (cd, rm, cp, mv, mkdir, touch, chmod, chown, cat, PowerShell *-Item/*-Content). Commands like `head ~/.ssh/id_rsa`, `less`, `python -c`, or redirections are not path-checked (source). Per source, `read` patterns are relative paths, so a `~/.ssh/*` pattern under `read` would not match; use external_directory instead (inferred, not tested).
+- Defaults: `*.env` and `*.env.*` reads ASK (the docs say 'denied by default'; v1.19.0 and installed 1.18.19 source/binary use ask). The read permission does not stop shell reads: `cat .env` is a bash permission check. The shell's external_directory check covers only file arguments of a fixed command list (cd, rm, cp, mv, mkdir, touch, chmod, chown, cat, PowerShell *-Item/*-Content). Commands like `head ~/.ssh/id_rsa`, `less`, `python -c`, or redirections are not path-checked (source). In the source code, `read` patterns are relative paths, so a `~/.ssh/*` pattern under `read` would not match; use external_directory instead (inferred, not tested).
 
 **Cursor**
 
@@ -355,7 +361,7 @@ Restrict writes to the workspace or to listed paths.
 
 **OpenCode**
 
-- Covers the edit/write/apply_patch tools. Shell writes are only covered by bash rules and the partial external_directory scan (e.g. `echo x > ~/.bashrc` is not path-checked per source). There is no OS-level enforcement. external_directory defaults to ask, and --auto approves it.
+- Covers the edit/write/apply_patch tools. Shell writes are only covered by bash rules and the partial external_directory scan (e.g. `echo x > ~/.bashrc` is not path-checked, according to the source code). There is no OS-level enforcement. external_directory defaults to ask, and --auto approves it.
 
 **Cursor**
 
@@ -449,7 +455,7 @@ Run agent commands inside an operating-system or container sandbox.
 
 **Gemini CLI**
 
-- Off by default. The configuration reference says YOLO enables the sandbox by default, but in v0.63.0 sandboxConfig.ts nothing turns it on for yolo (source-checked). Env overrides settings, so a user, or a trusted project's .env per source, can set GEMINI_SANDBOX=false. A project can supply its own seatbelt profile or sandbox.Dockerfile. Sandbox expansion prompts can widen access. Docs warn the sandbox reduces but does not remove risk.
+- Off by default. The configuration reference says YOLO enables the sandbox by default, but in v0.63.0 sandboxConfig.ts nothing turns it on for yolo (source-checked). Env overrides settings, so a user, or a trusted project's .env (according to the source code), can set GEMINI_SANDBOX=false. A project can supply its own seatbelt profile or sandbox.Dockerfile. Sandbox expansion prompts can widen access. Docs warn the sandbox reduces but does not remove risk.
 
 **OpenCode**
 
@@ -535,7 +541,7 @@ Let an admin turn bypass or yolo modes off so users and projects cannot turn the
 | OpenCode | ❌ no | No setting disables --auto or the TUI auto-approve toggle. The nearest control is managed config deny rules (managed files or macOS MDM), which auto mode still honours. | [1](https://github.com/anomalyco/opencode/blob/733b2c627e5a/packages/opencode/src/cli/cmd/run.ts#L242-L245) [2](https://github.com/anomalyco/opencode/blob/733b2c627e5a/packages/opencode/src/config/config.ts#L559-L561) |
 | Cursor | ✅ yes | team: Team dashboard Run Mode policy (Auto Run Configuration, listed under Enterprise-only settings) sets which modes members can choose. Admins can gate Auto-review and disable headless CLI usage. Admin-controlled allowlists replace user and repo lists. · cli: Team-configured approval modes are respected in headless runs (CLI changelog). Admins can block non-interactive CLI usage. · mdm: None for Run Mode. MDM cove… | [1](https://cursor.com/docs/agent/security/run-modes.md) [2](https://cursor.com/docs/enterprise/organization-groups.md) [3](https://cursor.com/docs/cli/changelog.md) |
 | GitHub Copilot | ✅ yes | managed settings: {"permissions": {"disableBypassPermissionsMode": "disable"}} (or "allow-auto-only"), via server-managed, MDM, or file. CLI: suppresses --allow-all-tools/-paths/-urls, --allow-all, --yolo, /allow-all and /yolo; an unrecognised value fails closed to 'disable'; re-fetched hourly. VS Code: turns off chat.tools.global.autoApprove. Copilot app: blocks 'Allow all'. Supported on JetBrains too. Overridable… | [1](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference) [2](https://docs.github.com/en/copilot/reference/enterprise-administrators/enterprise-managed-settings) [3](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference) |
-| Windsurf (Devin Desktop) | ✅ yes | cascade: Team setting 'Maximum autonomy level' (Teams & Enterprise). Members can choose any level up to the max. For example, max 'Auto' makes Turbo unavailable. 'Enable Cascade' (Enterprise) can disable Cascade entirely. · devin local: No toggle to disable Bypass is documented. Admins instead enforce org deny/ask rules (active in all modes) and can make the sandbox Required, which leaves Autonomous as the only perm… | [1](https://docs.devin.ai/desktop/terminal.md) [2](https://docs.devin.ai/desktop/controls.md) [3](https://docs.devin.ai/cli/reference/permissions.md) |
+| Windsurf (Devin Desktop) | 🟡 partial | cascade: Team setting 'Maximum autonomy level' (Teams & Enterprise). Members can choose any level up to the max. For example, max 'Auto' makes Turbo unavailable. 'Enable Cascade' (Enterprise) can disable Cascade entirely. · devin local: No toggle to disable Bypass is documented. Admins instead enforce org deny/ask rules (active in all modes) and can make the sandbox Required, which leaves Autonomous as the only perm… | [1](https://docs.devin.ai/desktop/terminal.md) [2](https://docs.devin.ai/desktop/controls.md) [3](https://docs.devin.ai/cli/reference/permissions.md) |
 
 <details><summary>Limits and caveats</summary>
 
@@ -553,7 +559,7 @@ Let an admin turn bypass or yolo modes off so users and projects cannot turn the
 
 **OpenCode**
 
-- Auto mode is a client behaviour (auto-replying 'once'), so admins cannot turn it off. Admins can only convert critical rules to deny. Even then, per source, OPENCODE_PERMISSION is merged after managed config (user-overridable), and a key-ordering quirk lets later-appended wildcard keys outrank managed rules (see managed_policy).
+- Auto mode is a client behaviour (auto-replying 'once'), so admins cannot turn it off. Admins can only convert critical rules to deny. Even then, the source code shows that OPENCODE_PERMISSION is merged after managed config (user-overridable), and a key-ordering quirk lets later-appended wildcard keys outrank managed rules (see managed_policy).
 
 **Cursor**
 
@@ -571,6 +577,7 @@ Let an admin turn bypass or yolo modes off so users and projects cannot turn the
 
 **Windsurf (Devin Desktop)**
 
+- No documented toggle turns Bypass off in Devin Local. Making the sandbox Required hides it, leaving Autonomous as the only mode.
 - 'Maximum autonomy level' applies to Cascade only. Devin Local uses 'Devin CLI permissions'.
 - On Team plans Devin Local is available by default. Legacy Cascade terminal controls apply to it only as a fallback when no CLI permission config exists.
 
@@ -602,7 +609,7 @@ Restrict which MCP servers may run.
 
 **Gemini CLI**
 
-- Local allowlisting is by name only; the command or URL is whatever the winning config defines. mcp.allowed has no merge strategy, so a later scope replaces it: a trusted project overrides the user's list and only the system file is authoritative. Per source, mcp.allowed also adds an ALLOW policy rule for every tool of the listed servers (auto-approval, not just permission to start). Untrusted folders connect to no MCP servers.
+- Local allowlisting is by name only; the command or URL is whatever the winning config defines. mcp.allowed has no merge strategy, so a later scope replaces it: a trusted project overrides the user's list and only the system file is authoritative. In the source code, mcp.allowed also adds an ALLOW policy rule for every tool of the listed servers (auto-approval, not just permission to start). Untrusted folders connect to no MCP servers.
 
 **OpenCode**
 
@@ -679,7 +686,7 @@ Run your own check before a tool call and block it.
 
 | Agent | Support | How | Sources |
 |---|---|---|---|
-| Claude Code | ✅ yes | hooks.PreToolUse (fires for every tool, including MCP tools, except EndConversation). Input on stdin (or HTTP POST body): session_id, prompt_id, transcript_path, cwd, permission_mode, hook_event_name, tool_name, tool_input, tool_use_id, plus mcp_server {name, source} for MCP tools. Block by exiting 2 (stderr becomes the reason) or by printing JSON {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDec… | [1](https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event) [2](https://code.claude.com/docs/en/hooks#pretooluse-input) [3](https://code.claude.com/docs/en/permissions#extend-permissions-with-hooks) |
+| Claude Code | ✅ yes | hooks.PreToolUse (fires for every tool, including MCP tools, except EndConversation). Input on stdin (or HTTP POST body): session_id, prompt_id, transcript_path, cwd, permission_mode, hook_event_name, tool_name, tool_input, tool_use_id, plus mcp_server {name, source} for MCP tools. Block by exiting 2 (stderr becomes the reason) or by printing JSON {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDec… | [1](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails) [2](https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event) [3](https://code.claude.com/docs/en/hooks#pretooluse-input) |
 | Codex CLI | ✅ yes | hooks.json or inline [hooks] next to any config layer (e.g. ~/.codex/hooks.json, <repo>/.codex/hooks.json, requirements.toml). [[hooks.PreToolUse]] matcher = "^Bash$"; [[hooks.PreToolUse.hooks]] type = "command", command = "/abs/policy.py", timeout = 30. Blocking events: PreToolUse (Bash/unified exec, apply_patch alias Edit\|Write, MCP tools, other local function tools); PermissionRequest (allow/deny an approval; any… | [1](https://learn.chatgpt.com/docs/hooks) [2](https://learn.chatgpt.com/docs/hooks) [3](https://learn.chatgpt.com/docs/hooks) |
 | Gemini CLI | ✅ yes | settings hooks.BeforeTool: [{"matcher":"run_shell_command\|write_file","hooks":[{"type":"command","command":"$GEMINI_PROJECT_DIR/.gemini/hooks/check.sh","timeout":5000}]}]. stdin JSON: session_id, transcript_path, cwd, hook_event_name, timestamp, tool_name, tool_input, mcp_context, original_request_name. Block by printing {"decision":"deny","reason":"..."} (exit 0) or exiting 2 (stderr becomes the reason); {"decision… | [1](https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/hooks/reference.md) [2](https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/hooks/index.md) [3](https://github.com/google-gemini/gemini-cli/blob/573846625af9/packages/core/src/hooks/hookRegistry.ts#L180-L185) |
 | OpenCode | ✅ yes | Plugins, not config hooks. Put a JS/TS module in .opencode/plugins/ or ~/.config/opencode/plugins/, or list npm packages in `plugin`. Hook `tool.execute.before`(input {tool, sessionID, callID}, output {args}) runs before the tool and its permission check; throwing an Error blocks the call, and mutating output.args rewrites it. Example: export const P = async () => ({ "tool.execute.before": async (i, o) => { if (i.to… | [1](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/web/src/content/docs/plugins.mdx) [2](https://github.com/anomalyco/opencode/blob/733b2c627e5a/packages/opencode/src/session/tools.ts#L106-L110) [3](https://github.com/anomalyco/opencode/blob/733b2c627e5a/packages/plugin/src/index.ts#L261) |
@@ -699,7 +706,7 @@ Run your own check before a tool call and block it.
 
 **Gemini CLI**
 
-- BeforeTool runs before the policy check and cannot grant approval; an 'allow' is a no-op, and the policy check still runs on the possibly-rewritten args. Exit codes other than 0/2, or non-JSON stdout, fail open (tool proceeds). Per source, in an untrusted folder all settings-defined hooks are skipped, including user and system ones (they are processed as 'Project' source). Project hooks are 'fingerprinted', but the code only warns and then auto-trusts them; it does not ask.
+- BeforeTool runs before the policy check and cannot grant approval; an 'allow' is a no-op, and the policy check still runs on the possibly-rewritten args. Exit codes other than 0/2, or non-JSON stdout, fail open (tool proceeds). In the source code, in an untrusted folder all settings-defined hooks are skipped, including user and system ones (they are processed as 'Project' source). Project hooks are 'fingerprinted', but the code only warns and then auto-trusts them; it does not ask.
 
 **OpenCode**
 
@@ -802,7 +809,7 @@ Whether a cloned repo's own config applies automatically, and what it can change
 
 **Gemini CLI**
 
-- Once trusted, the repo's settings merge above user settings. Can a repo weaken safety? It cannot select yolo (defaultApprovalMode=yolo is ignored), and workspace policy TOMLs are disabled in code. It CAN: set auto_edit; auto-approve tools via tools.allowed (warned), mcpServers.<x>.trust or mcp.allowed (not warned); replace the user's tools.allowed/tools.core/mcp.allowed arrays; add MCP servers and hooks that run commands at startup; set .env values such as GEMINI_SANDBOX=false (source-inferred). On installed 0.22.2, folder trust is off by default, so all of this applies with no prompt.
+- Once trusted, the repo's settings merge above user settings. Can a repo weaken safety? It cannot select yolo (defaultApprovalMode=yolo is ignored), and workspace policy TOMLs are disabled in code. It CAN: set auto_edit; auto-approve tools via tools.allowed (warned), mcpServers.<x>.trust or mcp.allowed (not warned); replace the user's tools.allowed/tools.core/mcp.allowed arrays; add MCP servers and hooks that run commands at startup; set .env values such as GEMINI_SANDBOX=false (from the source code, not tested). In older releases such as 0.22.2, folder trust is off by default, so all of this applies with no prompt.
 
 **OpenCode**
 
