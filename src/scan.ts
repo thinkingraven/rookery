@@ -1,7 +1,8 @@
 import { discover, localRoots, repoName, type Root } from './discover.js';
 import { skillshareCopyName, skillshareFlatName } from './provenance.js';
 import { parseCandidate } from './parse.js';
-import { runRules } from './rules.js';
+import { metaFinding, runRules } from './rules.js';
+import { nameCollisions } from './quality.js';
 import { findClusters } from './similarity.js';
 import { SEVERITIES, type Artifact, type Finding, type ScanOptions, type ScanResult, type Severity } from './types.js';
 import { VERSION } from './version.js';
@@ -20,7 +21,8 @@ export function scan(opts: ScanOptions): ScanResult {
   const artifacts = mergeSyncedCopies(parsed);
 
   const severityRank = (s: Severity) => SEVERITIES.indexOf(s);
-  const findings = dedupe(artifacts.flatMap(runRules))
+  const collisions = nameCollisions(artifacts).map(({ art, other }) => metaFinding(art, 'RK-QLT-009', 1, `${art.name}: also ${other.relPath}`));
+  const findings = dedupe([...artifacts.flatMap(runRules), ...collisions])
     .filter((f) => opts.includeInfo || f.severity !== 'info')
     .sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || a.repo.localeCompare(b.repo) || a.relPath.localeCompare(b.relPath) || a.line - b.line);
 

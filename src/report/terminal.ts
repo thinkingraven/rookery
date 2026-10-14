@@ -1,5 +1,6 @@
 import type { PolicyResult, ScanResult, Severity } from '../types.js';
 import { CATEGORY_LABELS } from '../categories.js';
+import { isQuality } from '../quality.js';
 import { AGENT_LABEL, MANAGER_LABEL, linkTargets, linkText, provenanceText, shortSource, sourceGroups } from './sources.js';
 
 export interface TerminalOptions { color: boolean; verbose: boolean; htmlPath?: string }
@@ -72,13 +73,25 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
   }
   if (r.clusters.length > 8 && !o.verbose) out.push(dim(`  … ${r.clusters.length - 8} more clusters (use --verbose)`));
 
-  const s = r.stats.findingsBySeverity;
-  const total = Object.values(s).reduce((a, b) => a + b, 0);
-  const sure = r.findings.filter((f) => f.confidence === 'high');
-  const unsure = r.findings.length - sure.length;
+  const quality = r.findings.filter((f) => isQuality(f.ruleId));
+  const security = r.findings.filter((f) => !isQuality(f.ruleId));
+  const qualityFiles = new Set(quality.map((f) => `${f.repo}/${f.relPath}`)).size;
+  h('QUALITY', quality.length ? `${n(quality.length)} issue${quality.length === 1 ? '' : 's'} in ${n(qualityFiles)} file${qualityFiles === 1 ? '' : 's'}: names, descriptions and links agents rely on` : 'no issues found');
+  const byRule = new Map<string, typeof quality>();
+  for (const f of quality) byRule.set(f.ruleId, [...(byRule.get(f.ruleId) ?? []), f]);
+  for (const [ruleId, list] of [...byRule].sort((a, b) => b[1].length - a[1].length)) {
+    out.push(`  ${cyan('●')} ${list[0].title}${list.length > 1 ? ` ${bold('×' + list.length)}` : ''}  ${dim(ruleId)}`);
+    const shown = list.slice(0, o.verbose ? 1000 : 3);
+    for (const f of shown) out.push(`      ${f.repo}/${f.relPath}${dim(':' + f.line)}  ${dim(f.snippet)}`);
+    if (list.length > shown.length) out.push(dim(`      … ${list.length - shown.length} more (use --verbose or --html)`));
+  }
+
+  const total = security.length;
+  const sure = security.filter((f) => f.confidence === 'high');
+  const unsure = security.length - sure.length;
   const sev = (list: typeof r.findings) => (['critical', 'high', 'medium', 'low', 'info'] as Severity[]).map((k) => [k, list.filter((f) => f.severity === k).length] as const).filter(([, v]) => v);
   h('SECURITY', total ? `${sev(sure).map(([k, v]) => `${v} ${k}`).join(' · ') || 'no high-confidence findings'}${unsure ? `  +${unsure} low-confidence` : ''}` : 'no findings');
-  const visible = (o.verbose ? r.findings : sure.filter((f) => f.severity !== 'info' && f.severity !== 'low'));
+  const visible = (o.verbose ? security : sure.filter((f) => f.severity !== 'info' && f.severity !== 'low'));
   const limit = o.verbose ? 1000 : 15;
   for (const f of visible.slice(0, limit)) {
     out.push(`  ${sevColor[f.severity](f.severity.toUpperCase().padEnd(8))} ${dim(f.ruleId)}  ${f.title}${f.confidence === 'low' ? dim(`  (low confidence: ${f.context})`) : ''}`);
@@ -100,7 +113,8 @@ export function renderTerminal(r: ScanResult, o: TerminalOptions): string {
   if (dupes.length) steps.push(`Consolidate ${dupes.length} duplicate cluster${dupes.length === 1 ? '' : 's'} into shared skills (${dupeArtifacts} → ${dupes.length}).`);
   if (r.stats.modifiedSinceInstall) steps.push(`Review ${r.stats.modifiedSinceInstall} installed skill${r.stats.modifiedSinceInstall === 1 ? '' : 's'} edited since install: they no longer match their source.`);
   if (sh) steps.push(`Review ${red(sh + ' high')} finding${sh === 1 ? '' : 's'}: permission bypasses, piped installs, risky hooks.`);
-  const mcp = r.findings.filter((f) => f.ruleId === 'RK-MCP-001').length;
+  if (quality.length) steps.push(`Fix ${quality.length} skill quality issue${quality.length === 1 ? '' : 's'} so agents can find and use those skills.`);
+  const mcp = security.filter((f) => f.ruleId === 'RK-MCP-001').length;
   if (mcp) steps.push(`Pin versions for ${mcp} MCP server${mcp === 1 ? '' : 's'}.`);
   if (!steps.length) steps.push(pol ? 'Passes the policy. Run rookery check in CI to keep it that way.' : 'Looks clean. Run rookery in CI with --fail-on high to keep it that way.');
   for (const st of steps) out.push(`  ${amber('→')} ${st}`);
