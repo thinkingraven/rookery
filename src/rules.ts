@@ -272,6 +272,15 @@ function unpinnedPackage(cmd?: string, args: string[] = []): string | null {
 
 const BROAD_BASH = /^(?:\*|Bash|Bash\(\*\)|Bash\(\*:\*\)|Bash\(:\*\))$/;
 
+/** Whether one line of text matches a text rule (used by the runtime hook on live commands). */
+export function ruleMatches(ruleId: string, text: string): boolean {
+  const rule = TEXT_RULES.find((r) => r.id === ruleId);
+  if (!rule) return false;
+  const re = new RegExp(rule.re.source, rule.re.flags.replace('g', ''));
+  const m = re.exec(text);
+  return !!m && !(rule.exclude && rule.exclude.test(m[0])) && !(rule.validate && !rule.validate(m[0]));
+}
+
 /** True when a matched line reads as an example, warning, test or scanner pattern rather than an instruction. */
 export function lowConfidence(ruleId: string, relPath: string, line: string): boolean {
   return assess(ruleId, relPath, line, line, line).confidence === 'low';

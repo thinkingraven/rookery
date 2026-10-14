@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, relative } from 'node:path';
 import { scan } from './scan.js';
 import { renderTerminal } from './report/terminal.js';
@@ -12,6 +12,7 @@ import { ALL_RULES } from './rules.js';
 import { loadPolicy, PolicyError, POLICY_RULES, policyTemplate, PRESETS, type PresetName } from './policy/policy.js';
 import { checkPolicy } from './policy/check.js';
 import { ADMIN_FILE, STATE_FILE, lineDiff, planApply, writePlan } from './policy/apply.js';
+import { HOOK_AGENTS, runHook, type HookAgent } from './policy/runtime.js';
 import { SEVERITIES, type Severity } from './types.js';
 import { VERSION } from './version.js';
 
@@ -22,6 +23,8 @@ Usage
   rookery check [paths...]       Scan, then check the result against .rookery.yml (exit 1 if it fails)
   rookery policy init            Write a starter .rookery.yml (--preset strict|balanced|solo)
   rookery policy apply [path]    Show how .rookery.yml maps into each agent's own config (--write to apply)
+  rookery hook <agent>           Pre-tool-use hook: check one live tool call against .rookery.yml
+                                 (installed by policy apply when runtime.hooks is true; reads the call on stdin)
   rookery rules                  List every security and policy rule
 
 Options
@@ -47,6 +50,7 @@ Options
   --preset <name>                     Preset for policy init: strict, balanced (default) or solo
   --force                             Let policy init overwrite an existing file
   --write                             Let policy apply write the files (without it, apply only shows a diff)
+  --update-hooks                      Let policy apply move installed hooks to this rookery version
   -v, --version                       Print the version
   -h, --help                          Show this help
 
@@ -64,6 +68,8 @@ function fail(msg: string): never {
 
 function main(argv: string[]): number {
   let parsed;
+  // The hook must answer in the agent's own format, even for a usage error, so it never goes through fail().
+  if (argv[0] === 'hook') return hook(argv.slice(1));
   try {
     parsed = parseArgs({
       args: argv,
@@ -89,6 +95,7 @@ function main(argv: string[]): number {
         preset: { type: 'string', default: 'balanced' },
         force: { type: 'boolean', default: false },
         write: { type: 'boolean', default: false },
+        'update-hooks': { type: 'boolean', default: false },
       },
     });
   } catch (err) {
@@ -178,7 +185,7 @@ function policyApply(target: string, o: Record<string, unknown>): number {
   const root = dirname(loaded.source);
   let result;
   try { result = scan({ paths: [root], maxFileBytes: 512 * 1024, includeInfo: false, similarityThreshold: 0.5 }); } catch (err) { fail((err as Error).message); }
-  const plan = planApply(root, loaded.policy, [...new Set(result.artifacts.map((a) => a.agent))]);
+  const plan = planApply(root, loaded.policy, [...new Set(result.artifacts.map((a) => a.agent))], { updateHooks: o['update-hooks'] as boolean });
   const color = !o['no-color'] && !process.env.NO_COLOR && (Boolean(process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') || process.stdout.isTTY === true);
   const c = (code: string) => (s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
   const bold = c('1'), dim = c('2'), green = c('32'), red = c('31'), yellow = c('33'), amber = c('38;5;214');
@@ -202,6 +209,23 @@ function policyApply(target: string, o: Record<string, unknown>): number {
   } else if (changed.length) out.push(dim('Dry run: nothing written. Run again with --write to apply.'));
   process.stdout.write(out.join('\n') + '\n');
   return 0;
+}
+
+/** `rookery hook <agent> [--policy file]`: read one tool call on stdin, answer on stdout/stderr and the exit code. */
+function hook(args: string[]): number {
+  const agent = args[0] as HookAgent;
+  const at = args.indexOf('--policy');
+  const policyFile = at > 0 ? args[at + 1] : undefined;
+  if (!HOOK_AGENTS.includes(agent) || (at > 0 && !policyFile)) {
+    process.stderr.write(`rookery hook: expected one of ${HOOK_AGENTS.join(', ')}${at > 0 ? ' and a file after --policy' : ''}. Blocking this call.\n`);
+    return 2;
+  }
+  let stdin = '';
+  try { stdin = readFileSync(0, 'utf8'); } catch { /* empty input is an error below, so the call is blocked */ }
+  const r = runHook(agent, stdin, { policyFile });
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  return r.exitCode;
 }
 
 function failedOn(findings: { severity: Severity; confidence: string }[], failOn: Severity, strict: boolean): boolean {

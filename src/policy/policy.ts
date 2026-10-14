@@ -27,6 +27,7 @@ export interface Policy {
   hooks: { network: Level };
   files: { read_secrets: Level; never_read: string[] };
   drift: Level;                 // agent configs out of date with the policy (once `policy apply` has been used)
+  runtime: { hooks: boolean; command?: string };   // hooks: `policy apply` installs `rookery hook` in each agent; command: what runs it
   exceptions: Exception[];
 }
 
@@ -50,6 +51,7 @@ export const PRESETS: Record<PresetName, Omit<Policy, 'version' | 'extends' | 'e
     hooks: { network: 'forbid' },
     files: { read_secrets: 'forbid', never_read: NEVER_READ_DEFAULT },
     drift: 'forbid',
+    runtime: { hooks: false },
   },
   balanced: {
     fail_on: 'high',
@@ -59,6 +61,7 @@ export const PRESETS: Record<PresetName, Omit<Policy, 'version' | 'extends' | 'e
     hooks: { network: 'warn' },
     files: { read_secrets: 'forbid', never_read: NEVER_READ_DEFAULT },
     drift: 'warn',
+    runtime: { hooks: false },
   },
   solo: {
     fail_on: 'none',
@@ -68,6 +71,7 @@ export const PRESETS: Record<PresetName, Omit<Policy, 'version' | 'extends' | 'e
     hooks: { network: 'warn' },
     files: { read_secrets: 'warn', never_read: NEVER_READ_DEFAULT },
     drift: 'allow',
+    runtime: { hooks: false },
   },
 };
 
@@ -86,6 +90,7 @@ const AGENT_ALIASES: Record<string, Agent> = {
 const SHAPE: Record<string, string[] | null> = {
   version: null, extends: null, agents: null, fail_on: null, exceptions: null, drift: null,
   approvals: ['bypass'], shell: ['any_command', 'deny'], mcp: ['unpinned', 'unlisted', 'allow'], hooks: ['network'], files: ['read_secrets', 'never_read'],
+  runtime: ['hooks', 'command'],
 };
 
 /** Parse and validate policy YAML. Unknown keys and bad values are errors, so typos never weaken a policy silently. */
@@ -148,6 +153,15 @@ export function parsePolicy(text: string, source = '.rookery.yml'): Policy {
   level('files.read_secrets', sec('files').read_secrets, (l) => { policy.files.read_secrets = l; });
   const neverRead = list('files.never_read', sec('files').never_read);
   if (neverRead) policy.files.never_read = neverRead;
+  const rt = sec('runtime');
+  if (rt.hooks !== undefined) {
+    if (typeof rt.hooks === 'boolean') policy.runtime.hooks = rt.hooks;
+    else problems.push(`${where('runtime.hooks')} must be true or false`);
+  }
+  if (rt.command !== undefined) {
+    if (typeof rt.command === 'string' && rt.command.trim() && !/[\n\r]/.test(rt.command)) policy.runtime.command = rt.command.trim();
+    else problems.push(`${where('runtime.command')} must be a one-line command, e.g. "rookery" or "node node_modules/@thinkingraven/rookery/dist/src/cli.js"`);
+  }
 
   if (doc.exceptions !== undefined) {
     if (!Array.isArray(doc.exceptions)) problems.push(`${where('exceptions')} must be a list`);
@@ -229,6 +243,12 @@ ${p.files.never_read.map((x) => `    - "${x}"`).join('\n')}
 
 # Once \`rookery policy apply --write\` has run, agent configs that no longer match this file are drift.
 drift: ${p.drift}
+
+# hooks: true makes \`rookery policy apply\` install \`rookery hook\` in each agent, which checks every shell command,
+# file read and MCP call against this policy while the agent runs, and blocks what it forbids.
+runtime:
+  hooks: false
+#  command: rookery           # how hooks run rookery (default: npx -y @thinkingraven/rookery@<version>)
 
 # Only judge these agents' files (default: all). claude-code, codex, cursor, copilot, gemini, windsurf
 # agents: [claude-code, cursor]

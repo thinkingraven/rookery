@@ -2,6 +2,25 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## 0.6.0 — 2026-10-14
+
+- **`rookery hook <agent>`: the policy, enforced while agents run.** A pre-tool-use hook for Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot and Windsurf. It reads each agent's own hook input and checks the call against `.rookery.yml`:
+  - commands that start with a `shell.deny` prefix, anywhere in a command line;
+  - starting another agent with its approvals or sandbox off;
+  - shell commands and file reads that touch `files.never_read` paths or credential files;
+  - MCP servers that aren't in `mcp.allow`.
+  `forbid` blocks the call with the reason, in the agent's own answer format; `warn` lets it through.
+- **Fail closed.** Unreadable input or an invalid policy blocks the call.
+- **Decision log.** Blocks and warnings go to `~/.rookery/decisions/YYYY-MM-DD.jsonl` on your machine, with redacted subjects. `ROOKERY_HOME` moves it and `ROOKERY_HOOK_LOG=0` turns it off.
+- **`runtime: { hooks, command }` in `.rookery.yml`.** With `hooks: true`, `policy apply` installs the hook in each agent's config, next to existing hooks:
+  - `.claude/settings.json`, with `onFailure: "block"`;
+  - `.codex/hooks.json`;
+  - `.gemini/settings.json`;
+  - `.cursor/hooks.json`, with `failClosed: true`;
+  - `.github/hooks/rookery.json`;
+  - `.devin/hooks.json`.
+  Hooks run a pinned `npx` version until `--update-hooks`, or the `command` you set.
+
 ## 0.5.0 — 2026-10-14
 
 - **`rookery policy apply`.** Writes `.rookery.yml` into each agent's own config, for the agents found in the repo or listed in `agents:`.
