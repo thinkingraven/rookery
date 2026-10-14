@@ -1,4 +1,5 @@
 import type { ScanResult } from '../types.js';
+import { isQuality } from '../quality.js';
 import { CATEGORY_LABELS } from '../categories.js';
 import { AGENT_LABEL, MANAGER_LABEL, linkTargets, linkText, provenanceText, sourceGroups } from './sources.js';
 
@@ -35,9 +36,16 @@ export function renderMarkdown(r: ScanResult): string {
     }
     lines.push('');
   }
-  if (r.findings.length) {
+  const quality = r.findings.filter((f) => isQuality(f.ruleId));
+  const security = r.findings.filter((f) => !isQuality(f.ruleId));
+  if (quality.length) {
+    lines.push('## Skill quality', '', '| Rule | Issue | Location | Detail |', '|---|---|---|---|');
+    for (const f of quality) lines.push(`| ${f.ruleId} | ${esc(f.title)} | \`${f.repo}/${f.relPath}:${f.line}\` | ${esc(f.snippet)} |`);
+    lines.push('');
+  }
+  if (security.length) {
     lines.push('## Security findings', '', '| Severity | Confidence | Rule | Finding | Location |', '|---|---|---|---|---|');
-    for (const f of r.findings) lines.push(`| ${f.severity} | ${f.confidence}${f.context ? ` (${esc(f.context)})` : ''} | ${f.ruleId} | ${esc(f.title)} | \`${f.repo}/${f.relPath}:${f.line}\` |`);
+    for (const f of security) lines.push(`| ${f.severity} | ${f.confidence}${f.context ? ` (${esc(f.context)})` : ''} | ${f.ruleId} | ${esc(f.title)} | \`${f.repo}/${f.relPath}:${f.line}\` |`);
     lines.push('');
   }
   if (r.policy) {

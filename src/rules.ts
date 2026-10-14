@@ -1,4 +1,5 @@
 import type { Artifact, Finding, Severity } from './types.js';
+import { qualityIssues } from './quality.js';
 
 export interface RuleMeta {
   id: string;
@@ -89,7 +90,14 @@ const META_RULES: RuleMeta[] = [
   { id: 'RK-MCP-002', severity: 'high', title: 'MCP server over plain HTTP', why: 'Traffic, including tool inputs and tokens, travels unencrypted.', remediation: 'Use https://, or a local stdio server.' },
   { id: 'RK-MCP-003', severity: 'info', title: 'Remote MCP server', why: 'Tool calls and their data leave your network.', remediation: 'Confirm the vendor is approved and the data classification allows it.' },
   { id: 'RK-QLT-001', severity: 'low', title: 'Skill has no description', why: 'Agents decide when to load a skill from its description; without one it is rarely used.', remediation: 'Add a one-sentence description to the frontmatter saying what it does and when to use it.' },
-  { id: 'RK-QLT-002', severity: 'info', title: 'Very large agent file', why: 'Large always-on files consume context on every request.', remediation: 'Split into smaller skills that load on demand.' },
+  { id: 'RK-QLT-002', severity: 'info', title: 'Very large agent file', why: 'Large files cost context every time they load. Claude Code\'s docs suggest keeping SKILL.md under 500 lines.', remediation: 'Move reference material into separate files the skill links to, or split it into smaller skills.' },
+  { id: 'RK-QLT-003', severity: 'low', title: 'Skill name breaks the Agent Skills format', why: 'The Agent Skills spec allows up to 64 lowercase letters, digits and single hyphens. Cursor warns about any other name, and Copilot rejects names over 64 characters.', remediation: 'Use lowercase-hyphen form, e.g. pdf-tools, and rename the folder to match.' },
+  { id: 'RK-QLT-004', severity: 'low', title: 'Skill name doesn\'t match its folder', why: 'The Agent Skills spec requires `name` to match the skill\'s folder, and Cursor warns when it doesn\'t. Claude Code answers to both names.', remediation: 'Rename the folder or the name so they match.' },
+  { id: 'RK-QLT-005', severity: 'low', title: 'Skill description is too long', why: 'Copilot allows at most 1,024 characters, and Cursor warns past that. Claude Code cuts description plus when_to_use at 1,536 characters in its skill list.', remediation: 'Put the key use case first and move detail into the skill body.' },
+  { id: 'RK-QLT-006', severity: 'low', title: 'Skill links to a file that isn\'t there', why: 'The skill points the agent at a file that isn\'t in the skill folder or the repo, so the agent can\'t follow it.', remediation: 'Add the file, fix the path, or remove the link.' },
+  { id: 'RK-QLT-007', severity: 'low', title: 'Skill description is too short to match on', why: 'Agents load a skill when a request matches its description. A few words rarely say what it does and when to use it.', remediation: 'Say what the skill does and when to use it, in one or two sentences.' },
+  { id: 'RK-QLT-008', severity: 'low', title: 'Frontmatter field looks misspelled', why: 'Claude Code ignores fields it doesn\'t recognise, so a misspelled one does nothing. claude.ai uploads and the Skills API reject unexpected fields.', remediation: 'Use the documented field name, e.g. allowed-tools or disable-model-invocation.' },
+  { id: 'RK-QLT-009', severity: 'low', title: 'Two skills share a name', why: 'Different skills with the same name for the same agent: only one of them answers to it, and which one depends on load order.', remediation: 'Give each skill its own name, or remove the one you don\'t use.' },
 ];
 
 export const ALL_RULES: RuleMeta[] = [...TEXT_RULES, ...META_RULES].sort((a, b) => a.id.localeCompare(b.id));
@@ -239,7 +247,7 @@ const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|fixtures?|examples?|samples?|test
 const DOC_WARNING = /(?:\be\.g\.|\bfor example\b|\bexample:|\bsuch as\b|\bnever\b|\bdon'?t\b|\bdo not\b|\bavoid\b|\bbad:|\banti-?pattern\b|\bdangerous\b|\bmalicious\b|\battacker\b|\bthreat\b|\bdetects?\b|\bflag(?:s|ged)?\b|\bblocks?\b|\binstead of\b)/i;
 const SECURITY_DOC = /(?:threat|attack|vuln|security|audit|redact|scanner|antipattern|injection)[^/]*\.mdx?$/i;
 const PATTERN_CODE = /\b(?:regex|pattern|re\.compile|RegExp|rule|signature|payload|PATTERNS?)\b/;
-const ALWAYS_HIGH = new Set(['RK-INJ-002', 'RK-HOOK-001', 'RK-HOOK-002', 'RK-PRM-001', 'RK-PRM-002', 'RK-MCP-001', 'RK-MCP-002', 'RK-MCP-003', 'RK-QLT-001', 'RK-QLT-002']);
+const ALWAYS_HIGH = new Set(['RK-INJ-002', 'RK-HOOK-001', 'RK-HOOK-002', 'RK-PRM-001', 'RK-PRM-002', 'RK-MCP-001', 'RK-MCP-002', 'RK-MCP-003', 'RK-QLT-001', 'RK-QLT-002', 'RK-QLT-003', 'RK-QLT-004', 'RK-QLT-005', 'RK-QLT-006', 'RK-QLT-007', 'RK-QLT-008', 'RK-QLT-009']);
 
 /** Lower confidence when context shows the pattern is described, tested or warned about rather than used. */
 function assess(ruleId: string, relPath: string, snippet: string, around = snippet, line = snippet): { confidence: 'high' | 'low'; context?: string } {
@@ -287,6 +295,12 @@ export function lowConfidence(ruleId: string, relPath: string, line: string): bo
 }
 
 /** Run every rule against one artifact (its own text, bundled files and structured config). */
+/** A finding from a rule that isn't a text pattern (quality checks across several artifacts). */
+export function metaFinding(art: Artifact, id: string, line: number, snippet: string): Finding {
+  const r = META[id];
+  return { ruleId: r.id, severity: r.severity, title: r.title, message: r.why, relPath: art.relPath, line, snippet: clip(snippet), remediation: r.remediation, artifactId: art.id, repo: art.repo, confidence: 'high' };
+}
+
 export function runRules(art: Artifact): Finding[] {
   const findings: Finding[] = [];
   const push = (f: Omit<Finding, 'artifactId' | 'repo' | 'confidence'>, assessText?: string, line?: string) =>
@@ -323,8 +337,7 @@ export function runRules(art: Artifact): Finding[] {
     }
   }
 
-  if (art.kind === 'skill' && !String(art.frontmatter.description ?? '').trim()) meta('RK-QLT-001', 1, art.name);
-  if (art.tokens > 5000 && (art.kind === 'rules' || art.kind === 'skill')) meta('RK-QLT-002', 1, `${art.tokens.toLocaleString('en-US')} tokens`);
+  for (const q of qualityIssues(art)) meta(q.id, q.line, q.snippet);
 
   // One finding per rule per line is enough.
   const seen = new Set<string>();

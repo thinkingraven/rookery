@@ -2,6 +2,19 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## 0.7.0 — 2026-10-14
+
+- **Skill quality, its own section in every report.** Seven new checks on top of "no description" and "very large file", each backed by an agent's documented limits:
+  - `RK-QLT-003`: the name breaks the Agent Skills format (1–64 lowercase letters, digits and hyphens).
+  - `RK-QLT-004`: `name` doesn't match the skill's folder.
+  - `RK-QLT-005`: the description is over 1,024 characters, or over 1,536 with `when_to_use`.
+  - `RK-QLT-006`: a link to a file, or a listed `references/…` or `scripts/…` file, that the skill doesn't ship.
+  - `RK-QLT-007`: the description is too short to match on.
+  - `RK-QLT-008`: a frontmatter field looks misspelled (`allowed_tools`, `tools:` in a skill, `descripton`). Claude Code ignores unknown fields silently.
+  - `RK-QLT-009`: two different skills share a name for the same agent in one repo.
+- **Size:** `RK-QLT-002` also flags a `SKILL.md` over 500 lines.
+- **Separate from security:** quality issues appear under QUALITY in the terminal and under "Skill quality" in the Markdown and HTML reports, no longer among security findings. Test fixtures are skipped.
+
 ## 0.6.0 — 2026-10-14
 
 - **`rookery hook <agent>`: the policy, enforced while agents run.** A pre-tool-use hook for Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot and Windsurf. It reads each agent's own hook input and checks the call against `.rookery.yml`:

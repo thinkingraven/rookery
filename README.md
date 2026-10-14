@@ -47,7 +47,8 @@ Or install it: `npm install -g @thinkingraven/rookery`, then run `rookery scan .
 | **What teams keep building** | Artifacts grouped by purpose (code review, testing, commits, deployment…) and how many repos have one. A tall bar across many repos is your best candidate for one shared, reviewed skill. |
 | **Near-duplicates** | Copy-pasted and lightly edited skills clustered across repos *and* across agents. A Cursor rule, a Claude skill and a Copilot prompt can be the same thing. |
 | **Where skills come from** | Skills installed by [skillshare](https://github.com/runkids/skillshare) or `npx skills`: the source repo and commit, which tools each one is linked into, and which ones were **edited since install**. Symlinks and synced copies count once, not as duplicates. |
-| **Security findings** | 27 static checks on skill text, bundled scripts and agent config: secrets, exfiltration, prompt injection, hidden Unicode, harness overrides, piped installs, risky hooks, broad permissions and MCP servers. |
+| **Skill quality** | Whether an agent can find and use each skill: names and descriptions that break the Agent Skills format or an agent's limits, misspelled frontmatter fields that agents silently ignore, links to files the skill doesn't ship, and two skills fighting over one name. |
+| **Security findings** | 25 static checks on skill text, bundled scripts and agent config: secrets, exfiltration, prompt injection, hidden Unicode, harness overrides, piped installs, risky hooks, broad permissions and MCP servers. |
 
 Add `--html report.html` for a self-contained report you can send to your team:
 
@@ -74,6 +75,22 @@ Add `--html report.html` for a self-contained report you can send to your team:
 Point it at one repo or a folder of many. Each nested `.git` counts as its own repo, and repos with no agent files are counted too (a catalogue layout is the usual reason). Linked git worktrees (such as Claude Code's `.claude/worktrees/`) are skipped, so branch checkouts don't show up as duplicates; pass `--worktrees` to include them.
 
 Skill managers install by symlink, so rookery follows symlinks inside agent folders (with a loop guard) and reports each real skill once, listing every tool it's linked into. `--local` adds your user-level folders: `~/.claude`, `~/.agents`, `~/.codex`, `~/.cursor`, `~/.gemini` and `~/.config/skillshare`.
+
+## Skill quality rules
+
+| Rule | Flags | Why it matters |
+|---|---|---|
+| `RK-QLT-001` | a skill with no description | Agents decide when to load a skill from its description. |
+| `RK-QLT-002` | a skill over 500 lines, or any file over ~5,000 tokens (info) | It costs context every time it loads. |
+| `RK-QLT-003` | a name that isn't 1–64 lowercase letters, digits and hyphens | The Agent Skills format; Cursor warns, and Copilot rejects names over 64 characters. |
+| `RK-QLT-004` | a `name` that doesn't match the skill's folder | The spec requires it, and Cursor warns. |
+| `RK-QLT-005` | a description over 1,024 characters, or over 1,536 with `when_to_use` | Copilot's limit; Claude Code cuts its skill list at 1,536. |
+| `RK-QLT-006` | a link to a file, or a listed `references/…` or `scripts/…` file, that the skill doesn't ship | The agent can't follow it. |
+| `RK-QLT-007` | a description of three words or fewer | Too little to match a request on. |
+| `RK-QLT-008` | `allowed_tools`, `descripton`, `tools:` and other near-misses of documented fields | Claude Code ignores unknown fields; claude.ai uploads reject them. |
+| `RK-QLT-009` | two different skills with the same name for the same agent in one repo | Only one of them answers to it. |
+
+Quality issues have their own section in every report, and test fixtures are skipped. They're `low` (and `info` for size), so `--fail-on high` doesn't fail on them; use `--fail-on low` to enforce them in CI.
 
 ## Security rules
 
@@ -184,7 +201,7 @@ flowchart LR
   B --> C[Parse frontmatter, settings, hooks, MCP, bundled scripts]
   C --> D[Purpose taxonomy]
   C --> E[MinHash + LSH near-duplicates]
-  C --> F[27 rules + confidence]
+  C --> F[34 rules + confidence]
   D & E & F --> G[Terminal · JSON · Markdown · HTML · SARIF]
 ```
 
