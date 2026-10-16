@@ -43,7 +43,7 @@ Or install it: `npm install -g @thinkingraven/rookery`, then run `rookery scan .
 
 | | |
 |---|---|
-| **Inventory** | Every skill, command, subagent, rules file, settings file, hook and MCP server, with its agent, purpose and size in tokens. |
+| **Inventory** | Every skill, command, subagent, rules file, settings file, hook and MCP server, with its agent, purpose and size in tokens: the whole file, and `preloadTokens` — name and description alone for a skill or subagent, since only those load before it's invoked. |
 | **What teams keep building** | Artifacts grouped by purpose (code review, testing, commits, deployment…) and how many repos have one. A tall bar across many repos is your best candidate for one shared, reviewed skill. |
 | **Near-duplicates** | Copy-pasted and lightly edited skills clustered across repos *and* across agents. A Cursor rule, a Claude skill and a Copilot prompt can be the same thing. |
 | **Where skills come from** | Skills installed by [skillshare](https://github.com/runkids/skillshare) or `npx skills`: the source repo and commit, which tools each one is linked into, and which ones were **edited since install**. Symlinks and synced copies count once, not as duplicates. |

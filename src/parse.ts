@@ -176,9 +176,14 @@ export function parseCandidate(c: Candidate, maxFileBytes: number): Artifact | n
   }
 
   const name = str(frontmatter.name).trim() || (c.kind === 'skill' ? '' : firstHeading(body)) || defaultName(c);
+  const finalName = c.kind === 'skill' && !str(frontmatter.name).trim() ? defaultName(c) : name;
   const description = str(frontmatter.description).trim() || (isJson ? '' : firstParagraph(body));
   const bundled = c.kind === 'skill' ? bundledFiles(dirname(c.path), c.repoRoot) : [];
   const normalized = normalize(`${description}\n${body}`);
+  const tokens = Math.ceil(text.length / 4);
+  // A skill or subagent surfaces only its name and description until it's invoked; everything
+  // else (rules, settings, mcp-config, plugin) is always-on, so the whole file is its preload cost.
+  const preloadTokens = c.kind === 'skill' || c.kind === 'subagent' ? Math.ceil((finalName.length + description.length) / 4) : tokens;
 
   return {
     id: `${repoName(c.repoRoot)}:${c.relPath}`,
@@ -188,11 +193,12 @@ export function parseCandidate(c: Candidate, maxFileBytes: number): Artifact | n
     relPath: c.relPath,
     agent: c.agent,
     kind: c.kind,
-    name: c.kind === 'skill' && !str(frontmatter.name).trim() ? defaultName(c) : name,
+    name: finalName,
     description,
     body: text,
     bytes: Buffer.byteLength(text),
-    tokens: Math.ceil(text.length / 4),
+    tokens,
+    preloadTokens,
     allowedTools,
     hooks,
     mcpServers,
