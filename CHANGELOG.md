@@ -2,6 +2,10 @@
 
 All notable changes to rookery are listed here. This project follows [semantic versioning](https://semver.org).
 
+## 0.8.0 — 2026-10-16
+
+- **`preloadTokens` on every artifact**: the size, in tokens, of what actually loads before anything is invoked — a skill or subagent's name and description alone (the body loads only once it runs), or the whole file for anything always-on (rules, settings, mcp-config, plugin), where `tokens` already was the preload cost. `tokens` (the whole-file estimate) is unchanged and still there. Built for roost's "context tax" (`roost context --rookery`), where the existing `tokens` field was the wrong unit: it overstated a skill's real preload cost by counting the body too.
+
 ## 0.7.2 — 2026-10-14
 
 - **JSON report: each artifact keeps its `repoRoot`**, with your home folder shown as `~` (for example `~/code/app`). Tools that combine rookery with agent usage, such as roost, need it to match a skill to the repo an agent ran in. Absolute file paths and file contents are still left out.

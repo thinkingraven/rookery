@@ -46,6 +46,28 @@ test('parses hooks, permissions and MCP servers', () => {
   assert.deepEqual(mcp.mcpServers.map((s) => s.name), ['github', 'remote', 'local']);
 });
 
+test('preloadTokens: a skill or subagent is its name + description; anything always-on is the whole file', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(join(tmpdir(), 'rookery-preload-'));
+  const w = (rel: string, content: string) => { mkdirSync(join(root, 'app', rel, '..'), { recursive: true }); writeFileSync(join(root, 'app', rel), content); };
+  mkdirSync(join(root, 'app', '.git'), { recursive: true });
+  w('.claude/skills/code-review/SKILL.md', '---\nname: code-review\ndescription: Review a pull request for correctness and style.\n---\n\n'.padEnd(2000, 'x'));
+  w('.claude/agents/reviewer.md', '---\nname: reviewer\ndescription: A subagent that reviews code changes.\n---\n\n'.padEnd(2000, 'x'));
+  w('CLAUDE.md', '# Project rules\n\nAlways run tests before committing.\n'.padEnd(2000, 'x'));
+
+  const r = scan({ paths: [root], maxFileBytes: 512 * 1024, includeInfo: false, similarityThreshold: 0.5 });
+  const skill = r.artifacts.find((a) => a.relPath.endsWith('code-review/SKILL.md'))!;
+  const subagent = r.artifacts.find((a) => a.kind === 'subagent')!;
+  const rules = r.artifacts.find((a) => a.kind === 'rules')!;
+
+  for (const a of [skill, subagent]) {
+    assert.ok(a.preloadTokens < a.tokens / 10, `${a.relPath}: name + description should be a small fraction of the whole ~2000-byte file, got ${a.preloadTokens} of ${a.tokens}`);
+    assert.equal(a.preloadTokens, Math.ceil((a.name.length + a.description.length) / 4));
+  }
+  assert.equal(rules.preloadTokens, rules.tokens, 'rules are always-on: the whole file is the preload cost');
+});
+
 test('detects exfiltration and unsafe execution in bundled scripts', () => {
   assert.ok(has('RK-EXF-001', 'deploy.sh'), 'env piped to curl');
   assert.ok(has('RK-EXF-002', 'deploy.sh'), 'webhook.site');

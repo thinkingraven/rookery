@@ -58,6 +58,12 @@ export interface Artifact {
   body: string;             // full text content
   bytes: number;
   tokens: number;           // rough estimate (chars / 4)
+  /**
+   * Rough estimate of what actually loads before the first turn, not the whole file: a skill's
+   * name + description (the body loads only when invoked). For a kind that's always fully loaded
+   * (rules, settings, mcp-config, plugin), this equals `tokens` — the whole file is the preload cost.
+   */
+  preloadTokens: number;
   allowedTools: string[];
   hooks: Hook[];
   mcpServers: McpServer[];
